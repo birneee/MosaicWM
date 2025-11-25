@@ -1,0 +1,234 @@
+/**
+ * Windowing Module
+ * 
+ * This module handles window management operations including:
+ * - Moving windows between workspaces
+ * - Checking window states and properties
+ * - Workspace navigation
+ * - Window filtering and exclusion logic
+ */
+
+import * as tiling from './tiling.js';
+
+/**
+ * Gets the current timestamp from GNOME Shell.
+ * Used for workspace activation and window focus operations.
+ * 
+ * @returns {number} Current timestamp in milliseconds
+ */
+function getTimestamp() {
+    return global.get_current_time();
+}
+
+/**
+ * Gets the index of the primary monitor.
+ * 
+ * @returns {number} Primary monitor index
+ */
+function getPrimaryMonitor() {
+    return global.display.getPrimaryMonitor();
+}
+
+/**
+ * Gets the currently active workspace.
+ * 
+ * @returns {Meta.Workspace} The active workspace
+ */
+export function getWorkspace() {
+    return global.workspace_manager.get_active_workspace();
+}
+
+/**
+ * Gets all windows across all workspaces.
+ * 
+ * @returns {Meta.Window[]} Array of all windows
+ */
+function getAllWindows() {
+    return global.display.list_all_windows();
+}
+
+/**
+ * Finds and returns the currently focused window.
+ * 
+ * @returns {Meta.Window|undefined} The focused window, or undefined if none
+ */
+function getFocusedWindow() {
+    let windows = getAllWindows();
+    for(let window of windows) {
+        if(window.has_focus())
+            return window;
+    }
+}
+
+/**
+ * Gets all windows in the active workspace for a specific monitor.
+ * 
+ * @param {number} monitor - Monitor index
+ * @param {boolean} allow_unrelated - Whether to include unrelated windows (dialogs, etc.)
+ * @returns {Meta.Window[]} Array of windows
+ */
+function getAllWorkspaceWindows(monitor, allow_unrelated) {
+    return getMonitorWorkspaceWindows(getWorkspace(), monitor, allow_unrelated);
+}
+
+/**
+ * Gets all windows in a specific workspace and monitor.
+ * Filters windows by monitor and optionally by whether they're "related" (normal windows).
+ * 
+ * @param {Meta.Workspace} workspace - The workspace to get windows from
+ * @param {number} monitor - Monitor index to filter by
+ * @param {boolean} allow_unrelated - If true, include dialogs and other unrelated windows
+ * @returns {Meta.Window[]} Array of filtered windows
+ */
+export function getMonitorWorkspaceWindows(workspace, monitor, allow_unrelated) {
+    let _windows = [];
+    let windows = workspace.list_windows();
+    for(let window of windows)
+        if(window.get_monitor() === monitor && (isRelated(window) || allow_unrelated))
+            _windows.push(window);
+    return _windows;
+}
+
+/**
+ * Gets the index of a window in its workspace's window list.
+ * 
+ * @param {Meta.Window} window - The window to find
+ * @returns {number|null} Index of the window, or null if not found
+ */
+function getIndex(window) {
+    let id = window.get_id();
+    let meta_windows = windowing.getMonitorWorkspaceWindows(window.get_workspace(), window.get_monitor());
+    for(let i = 0; i < meta_windows.length; i++)
+        if(meta_windows[i].id === id)
+            return i;
+    return null;
+}
+
+/**
+ * Moves a window back to the previous workspace.
+ * Only moves if there's space in the previous workspace.
+ * 
+ * @param {Meta.Window} window - The window to move back
+ * @returns {Meta.Workspace} The workspace the window was moved to, or current workspace if move failed
+ */
+export function moveBackWindow(window) {
+    let workspace = window.get_workspace();
+    let active = workspace.active;
+    let previous_workspace = workspace.get_neighbor(-3);
+    if(!previous_workspace) {
+        console.error("There is no workspace to the left.");
+        return;
+    }
+    if(!tiling.windowFits(window, previous_workspace)) // Make sure there is space for the window in the previous workspace
+        return workspace;
+    window.change_workspace(previous_workspace); // Move window to previous workspace
+    if(active)
+        previous_workspace.activate(getTimestamp()); // Switch to it
+    return previous_workspace;
+}
+
+/**
+ * Moves a window that doesn't fit in the current workspace to a new workspace.
+ * This is called when a window is too large (maximized/fullscreen) or when there's no space.
+ * 
+ * @param {Meta.Window} window - The window to move
+ * @returns {Meta.Workspace} The new workspace where the window was moved
+ */
+export function moveOversizedWindow(window) {
+    let previous_workspace = window.get_workspace();
+    let new_workspace = global.workspace_manager.append_new_workspace(false, getTimestamp());
+    let monitor = window.get_monitor();
+
+    window.change_workspace(new_workspace);
+    global.workspace_manager.reorder_workspace(new_workspace, previous_workspace.index() + 1);
+
+    let switchFocusToMovedWindow = previous_workspace.active;
+    if (switchFocusToMovedWindow) {
+        new_workspace.activate(getTimestamp());
+    }
+
+    return new_workspace;
+}
+
+/**
+ * Checks if a window is on the primary monitor.
+ * 
+ * @param {Meta.Window} window - The window to check
+ * @returns {boolean} True if on primary monitor, false otherwise
+ */
+export function isPrimary(window) {
+    if(window.get_monitor() === getPrimaryMonitor())
+        return true;
+    return false;
+}
+
+/**
+ * Checks if a window should be excluded from tiling.
+ * Windows are excluded if they are not related (dialogs, etc.) or if they are minimized.
+ * 
+ * @param {Meta.Window} meta_window - The window to check
+ * @returns {boolean} True if the window should be excluded from tiling, false otherwise
+ */
+export function isExcluded(meta_window) {
+    if( !isRelated(meta_window) ||
+        meta_window.minimized
+    )
+        return true;
+    return false;
+}
+
+/**
+ * Checks if a window is a "related" window that should be tiled.
+ * Related windows are normal windows (not dialogs, not on all workspaces).
+ * 
+ * @param {Meta.Window} meta_window - The window to check
+ * @returns {boolean} True if the window should be tiled, false otherwise
+ */
+export function isRelated(meta_window) {
+    if( !meta_window.is_attached_dialog() &&
+        meta_window.window_type === 0 &&
+        !meta_window.is_on_all_workspaces()
+    ) return true;
+    return false;
+}
+
+/**
+ * Checks if a window is maximized or in fullscreen mode.
+ * This is used to determine if a window should be moved to a separate workspace.
+ * 
+ * @param {Meta.Window} window - The window to check
+ * @returns {boolean} True if the window is maximized or fullscreen, false otherwise
+ */
+export function isMaximizedOrFullscreen(window) {
+    if((window.maximized_horizontally === true && window.maximized_vertically === true) || window.is_fullscreen()) {
+        return true;
+    } else {
+        return false;
+    }
+}
+
+/**
+ * Navigates to a previous workspace when the current one becomes empty.
+ * Tries to navigate left first, then right if left is not available.
+ * 
+ * @param {Meta.Workspace} workspace - The current workspace
+ * @param {boolean} condition - Whether to actually perform the navigation
+ */
+export function renavigate(workspace, condition) {
+    let previous_workspace = workspace.get_neighbor(-3);
+
+    if(previous_workspace === 1 || previous_workspace.index() === workspace.index() || !previous_workspace) {
+        previous_workspace = workspace.get_neighbor(-4); // The new workspace will be the one on the right instead.
+        // Recheck to see if it is still a problematic workspace
+        if( previous_workspace === 1 ||
+            previous_workspace.index() === workspace.index() ||
+            previous_workspace.index() === global.workspace_manager.get_n_workspaces() - 1)
+            return;
+    }
+    
+    if( condition &&
+        workspace.index() !== global.workspace_manager.get_n_workspaces() - 1)
+    {
+        previous_workspace.activate(getTimestamp());
+    }
+}
