@@ -146,9 +146,11 @@ export default class WindowMosaicExtension extends Extension {
         if(monitor === global.display.get_primary_monitor()) {
             const workspace = windowing.getWorkspace();
             
+            // Re-tile workspace after window is closed
+            // Use null as reference to tile all remaining windows
             tiling.tileWorkspaceWindows(workspace, 
-                global.display.get_focus_window(),
-                null,
+                null,  // No reference window - tile all windows
+                monitor,
                 true);
             
             // Check if workspace is now empty and navigate to previous if so

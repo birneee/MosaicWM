@@ -188,10 +188,11 @@ function tile(windows, work_area) {
 
     let overflow = false; // Set to true if windows don't fit
     
-    // Quick overflow check based on area
-    if (totalRequiredArea > availableArea * SPACE_USAGE_THRESHOLD) {
-        overflow = true;
-    }
+    // NOTE: Disabled area-based overflow check - it's too conservative
+    // The actual level-based tiling logic below correctly determines overflow
+    // if (totalRequiredArea > availableArea * SPACE_USAGE_THRESHOLD) {
+    //     overflow = true;
+    // }
 
     if(!vertical) { // Horizontal tiling mode
         // Calculate total width of all windows including spacing
@@ -622,7 +623,8 @@ export function tileWorkspaceWindows(workspace, reference_meta_window, _monitor,
  * 
  * Checks:
  * 1. If workspace has maximized/fullscreen window (= completely occupied)
- * 2. If adding the window would cause overflow in the layout
+ * 2. If there are snapped windows, uses remaining space for calculation
+ * 3. If adding the window would cause overflow in the available layout space
  * 
  * @param {Meta.Window} window - New window to check
  * @param {Meta.Workspace} workspace - Target workspace
@@ -630,30 +632,92 @@ export function tileWorkspaceWindows(workspace, reference_meta_window, _monitor,
  * @returns {boolean} True if window fits, false if should go to new workspace
  */
 export function canFitWindow(window, workspace, monitor) {
+    console.log(`[MOSAIC WM] canFitWindow: Checking if window can fit in workspace ${workspace.index()}`);
+    
     // Get workspace information
     let working_info = getWorkingInfo(workspace, window, monitor);
-    if(!working_info) return false;
-    
-    // If window is already in this workspace, it always fits
-    if(workspace.index() === window.get_workspace().index()) return true;
+    if(!working_info) {
+        console.log('[MOSAIC WM] canFitWindow: No working info - cannot fit');
+        return false;
+    }
 
     // RULE 1: Workspace with maximized window = completely occupied
     // Cannot receive new apps
     for(let existing_window of working_info.meta_windows) {
         if(windowing.isMaximizedOrFullscreen(existing_window)) {
+            console.log('[MOSAIC WM] canFitWindow: Workspace has maximized window - cannot fit');
             return false; // Workspace occupied by maximized window
         }
     }
 
-    // RULE 2: Try adding window to layout and see if it fits
-    let windows = working_info.windows;
-    windows.push(new WindowDescriptor(window, windows.length));
+    // RULE 2: Check for snapped windows and use remaining space
+    const snappedWindows = snap.getSnappedWindows(workspace, monitor);
+    let availableSpace = working_info.work_area;
+    
+    console.log(`[MOSAIC WM] canFitWindow: Found ${snappedWindows.length} snapped windows`);
+    
+    if (snappedWindows.length > 0) {
+        // Check if workspace is fully occupied by snaps (e.g., left + right)
+        const zones = snappedWindows.map(w => w.zone);
+        if (zones.includes('left') && zones.includes('right')) {
+            console.log('[MOSAIC WM] canFitWindow: Workspace fully occupied by snaps - cannot fit');
+            return false; // No space left
+        }
+        
+        // Calculate remaining space after snap
+        availableSpace = snap.calculateRemainingSpace(workspace, monitor);
+        console.log(`[MOSAIC WM] canFitWindow: Using remaining space after snap: ${availableSpace.width}x${availableSpace.height}`);
+    }
 
-    // Calculate layout with the new window
-    const tile_result = tile(windows, working_info.work_area);
+    // RULE 3: Try adding window to layout and see if it fits in available space
+    // Only consider non-snapped windows for the layout
+    const snappedIds = snappedWindows.map(s => s.window.get_id());
+    const newWindowId = window.get_id();
+    
+    // CRITICAL: Exclude the new window from existing windows to prevent double-counting
+    // The new window might already be in working_info.windows when this is called
+    let windows = working_info.windows.filter(w => 
+        !snappedIds.includes(w.id) && w.id !== newWindowId
+    );
+    
+    console.log(`[MOSAIC WM] canFitWindow: Current non-snapped windows: ${windows.length}, adding new window`);
+    
+    // Create a descriptor with ESTIMATED dimensions for the new window
+    // Calculate dynamically based on existing windows or available space
+    let estimatedWidth, estimatedHeight;
+    
+    if (windows.length > 0) {
+        // Use average dimensions of existing windows
+        const avgWidth = windows.reduce((sum, w) => sum + w.width, 0) / windows.length;
+        const avgHeight = windows.reduce((sum, w) => sum + w.height, 0) / windows.length;
+        estimatedWidth = avgWidth;
+        estimatedHeight = avgHeight;
+    } else {
+        // No existing windows: estimate based on a reasonable grid (2x2)
+        // This assumes windows will tile in a grid pattern
+        estimatedWidth = availableSpace.width / 2 - constants.WINDOW_SPACING;
+        estimatedHeight = availableSpace.height / 2 - constants.WINDOW_SPACING;
+    }
+    
+    const newWindowDescriptor = new WindowDescriptor(window, windows.length);
+    newWindowDescriptor.width = estimatedWidth;
+    newWindowDescriptor.height = estimatedHeight;
+    
+    windows.push(newWindowDescriptor);
+
+    // Calculate layout with the new window in available space
+    const tile_result = tile(windows, availableSpace);
+    
+    console.log(`[MOSAIC WM] canFitWindow: Tile result overflow: ${tile_result.overflow}`);
     
     // If it caused overflow, doesn't fit
-    return !tile_result.overflow;
+    if (tile_result.overflow) {
+        console.log('[MOSAIC WM] canFitWindow: Would overflow - cannot fit');
+        return false;
+    }
+    
+    console.log('[MOSAIC WM] canFitWindow: Window fits!');
+    return true;
 }
 
 /**
