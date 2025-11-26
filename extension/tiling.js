@@ -682,22 +682,13 @@ export function canFitWindow(window, workspace, monitor) {
     
     console.log(`[MOSAIC WM] canFitWindow: Current non-snapped windows: ${windows.length}, adding new window`);
     
-    // Create a descriptor with ESTIMATED dimensions for the new window
-    // Calculate dynamically based on existing windows or available space
-    let estimatedWidth, estimatedHeight;
+    // Use a very small conservative size for the test window
+    // The actual tile() function will resize windows to fit properly
+    // This prevents false overflow while still catching genuinely full workspaces
+    const estimatedWidth = 200;
+    const estimatedHeight = 200;
     
-    if (windows.length > 0) {
-        // Use average dimensions of existing windows
-        const avgWidth = windows.reduce((sum, w) => sum + w.width, 0) / windows.length;
-        const avgHeight = windows.reduce((sum, w) => sum + w.height, 0) / windows.length;
-        estimatedWidth = avgWidth;
-        estimatedHeight = avgHeight;
-    } else {
-        // No existing windows: estimate based on a reasonable grid (2x2)
-        // This assumes windows will tile in a grid pattern
-        estimatedWidth = availableSpace.width / 2 - constants.WINDOW_SPACING;
-        estimatedHeight = availableSpace.height / 2 - constants.WINDOW_SPACING;
-    }
+    console.log(`[MOSAIC WM] canFitWindow: Using conservative test size: ${estimatedWidth}x${estimatedHeight}`);
     
     const newWindowDescriptor = new WindowDescriptor(window, windows.length);
     newWindowDescriptor.width = estimatedWidth;
