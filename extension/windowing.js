@@ -163,17 +163,35 @@ export function isPrimary(window) {
 }
 
 /**
+ * List of WM_CLASS names that should be excluded from tiling.
+ * Currently only includes GNOME's builtin screenshot/screencast app
+ * which causes performance issues during screen recording.
+ */
+const BLACKLISTED_WM_CLASSES = [
+    'org.gnome.Screenshot',       // GNOME Screenshot/Screencast (builtin)
+];
+
+/**
  * Checks if a window should be excluded from tiling.
- * Windows are excluded if they are not related (dialogs, etc.) or if they are minimized.
+ * Windows are excluded if they are not related (dialogs, etc.), 
+ * if they are minimized, or if they are in the blacklist.
  * 
  * @param {Meta.Window} meta_window - The window to check
  * @returns {boolean} True if the window should be excluded from tiling, false otherwise
  */
 export function isExcluded(meta_window) {
-    if( !isRelated(meta_window) ||
-        meta_window.minimized
-    )
+    // Check if window is not related or minimized
+    if (!isRelated(meta_window) || meta_window.minimized) {
         return true;
+    }
+    
+    // Check if window is in blacklist
+    const wmClass = meta_window.get_wm_class();
+    if (wmClass && BLACKLISTED_WM_CLASSES.includes(wmClass)) {
+        console.log(`[MOSAIC WM] Window excluded (blacklisted): ${wmClass}`);
+        return true;
+    }
+    
     return false;
 }
 

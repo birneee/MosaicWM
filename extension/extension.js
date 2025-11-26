@@ -88,9 +88,10 @@ export default class WindowMosaicExtension extends Extension {
             {
                 clearTimeout(timeout);
                 
-                // Check if window should be managed
-                if(!windowing.isRelated(window)) {
-                    return; // Window should not be managed (dialog, etc.)
+                // Check if window should be managed (includes blacklist check)
+                if(windowing.isExcluded(window)) {
+                    console.log('[MOSAIC WM] Window excluded from tiling');
+                    return; // Window should not be managed (dialog, blacklisted, etc.)
                 }
                 
                 // CASE 1: Window is maximized/fullscreen AND there are other apps in workspace
@@ -135,6 +136,13 @@ export default class WindowMosaicExtension extends Extension {
     _destroyedHandler = (_, win) => {
         let window = win.meta_window;
         let monitor = window.get_monitor();
+        
+        // Only process if window was managed (not excluded/blacklisted)
+        if(windowing.isExcluded(window)) {
+            console.log('[MOSAIC WM] Excluded window closed - no workspace navigation');
+            return;
+        }
+        
         if(monitor === global.display.get_primary_monitor()) {
             const workspace = windowing.getWorkspace();
             
@@ -145,7 +153,7 @@ export default class WindowMosaicExtension extends Extension {
             
             // Check if workspace is now empty and navigate to previous if so
             const windows = windowing.getMonitorWorkspaceWindows(workspace, monitor);
-            const managedWindows = windows.filter(w => windowing.isRelated(w));
+            const managedWindows = windows.filter(w => !windowing.isExcluded(w));
             
             if (managedWindows.length === 0) {
                 console.log('[MOSAIC WM] Workspace is empty - navigating to previous workspace');
@@ -181,7 +189,7 @@ export default class WindowMosaicExtension extends Extension {
      */
     _sizeChangeHandler = (_, win, mode) => {
         let window = win.meta_window;
-        if(windowing.isRelated(window)) {
+        if(!windowing.isExcluded(window)) {
             let id = window.get_id();
             let workspace = window.get_workspace();
             let monitor = window.get_monitor();
@@ -222,10 +230,10 @@ export default class WindowMosaicExtension extends Extension {
 
     _sizeChangedHandler = (_, win) => {
         let window = win.meta_window;
-        if(!this._sizeChanged && windowing.isRelated(window)) {
+        if(!this._sizeChanged && !windowing.isExcluded(window)) {
             // Live resizing
             this._sizeChanged = true;
-            tiling.tileWorkspaceWindows(window.get_workspace(), window, null, true);
+            tiling.tileWorkspaceWindows(window.get_workspace(), window, window.get_monitor(), true);
             this._sizeChanged = false;
         }
     }
@@ -239,7 +247,7 @@ export default class WindowMosaicExtension extends Extension {
      * @param {number} grabpo - The grab operation type
      */
     _grabOpBeginHandler = (_, window, grabpo) => {
-        if( windowing.isRelated(window) &&
+        if( !windowing.isExcluded(window) &&
             (grabpo === 1 || grabpo === 1025) && // When a window has moved
             !(windowing.isMaximizedOrFullscreen(window)))
             reordering.startDrag(window);
@@ -255,12 +263,12 @@ export default class WindowMosaicExtension extends Extension {
      * @param {number} grabpo - The grab operation type
      */
     _grabOpEndHandler = (_, window, grabpo) => {
-        if(windowing.isRelated(window)) {
+        if(!windowing.isExcluded(window)) {
             reordering.stopDrag(window);
             if( (grabpo === 1 || grabpo === 1025) && // When a window has moved
                 !(windowing.isMaximizedOrFullscreen(window)))
             {
-                tiling.tileWorkspaceWindows(window.get_workspace(), window, null, false);
+                tiling.tileWorkspaceWindows(window.get_workspace(), window, window.get_monitor(), false);
             }
             if(grabpo === 25601) // When released from resizing
                 tileWindowWorkspace(window);
