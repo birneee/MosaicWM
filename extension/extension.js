@@ -48,6 +48,9 @@ export default class WindowMosaicExtension extends Extension {
         this._tileTimeout = null;
         this._windowWorkspaceSignals = new Map(); // window_id -> signal_id for workspace-changed
         this._workspaceChangeTimeout = null; // Debounce timeout for manual workspace changes
+        this._windowPreviousWorkspace = new Map(); // window_id -> previous_workspace_index for overview drag-drop
+        this._windowRemovedTimestamp = new Map(); // window_id -> timestamp when removed
+        this._manualWorkspaceMove = new Map(); // window_id -> true if manual move (workspace-changed fired)
     }
 
     _tileAllWorkspaces = () => {
@@ -196,8 +199,17 @@ export default class WindowMosaicExtension extends Extension {
      * @param {Meta.Window} window - The window that changed workspace
      */
     _windowWorkspaceChangedHandler = (window) => {
+        console.log(`[MOSAIC WM] workspace-changed fired for window ${window.get_id()}`);
+        
+        // Mark this as a manual workspace move (not overview drag-drop)
+        this._manualWorkspaceMove.set(window.get_id(), true);
+        
+        // Store the previous workspace index so we can re-tile it after the move
+        const previousWorkspaceIndex = this._windowPreviousWorkspace.get(window.get_id());
+        
         // Clear any existing debounce timeout
         if (this._workspaceChangeTimeout) {
+            console.log('[MOSAIC WM] Clearing previous debounce timeout');
             clearTimeout(this._workspaceChangeTimeout);
         }
         
@@ -207,9 +219,22 @@ export default class WindowMosaicExtension extends Extension {
             const workspace = window.get_workspace();
             const monitor = window.get_monitor();
             
+            console.log(`[MOSAIC WM] Debounce complete - checking overflow for window ${window.get_id()} in workspace ${workspace.index()}`);
+            
             // Skip if window is excluded
             if (windowing.isExcluded(window)) {
+                console.log('[MOSAIC WM] Window is excluded - skipping overflow check');
                 return;
+            }
+            
+            // Re-tile the source workspace to fill the gap left by the moved window
+            if (previousWorkspaceIndex !== undefined && previousWorkspaceIndex !== workspace.index()) {
+                const workspaceManager = global.workspace_manager;
+                const previousWorkspace = workspaceManager.get_workspace_by_index(previousWorkspaceIndex);
+                if (previousWorkspace) {
+                    console.log(`[MOSAIC WM] Re-tiling source workspace ${previousWorkspaceIndex} after window move`);
+                    tiling.tileWorkspaceWindows(previousWorkspace, null, monitor, false);
+                }
             }
             
             // Check if window fits in new workspace
@@ -351,7 +376,10 @@ export default class WindowMosaicExtension extends Extension {
     /**
      * Handler called when a window is added to a workspace.
      * This is triggered by workspace.connect('window-added').
-     * Tiles the workspace after a short delay to ensure the window is fully added.
+     * Handles both new window creation and overview drag-drop.
+     * 
+     * For overview drag-drop: checks overflow and returns window to previous workspace if needed.
+     * For new windows: just tiles normally (no overflow check to avoid infinite loops).
      * 
      * @param {Meta.Workspace} workspace - The workspace that received the window
      * @param {Meta.Window} window - The window that was added
@@ -364,6 +392,52 @@ export default class WindowMosaicExtension extends Extension {
 
             if (tiling.checkValidity(MONITOR, WORKSPACE, WINDOW, false)) {
                 clearTimeout(timeout);
+                
+                // Get window frame to check if it's a new window or existing one
+                const frame = WINDOW.get_frame_rect();
+                const hasValidDimensions = frame.width > 0 && frame.height > 0;
+                
+                // Check if this is an overview drag-drop (has different previous workspace AND happened recently)
+                const previousWorkspaceIndex = this._windowPreviousWorkspace.get(WINDOW.get_id());
+                const removedTimestamp = this._windowRemovedTimestamp.get(WINDOW.get_id());
+                const timeSinceRemoved = removedTimestamp ? Date.now() - removedTimestamp : Infinity;
+                const isManualMove = this._manualWorkspaceMove.get(WINDOW.get_id());
+                
+                console.log(`[MOSAIC WM] window-added debug: window=${WINDOW.get_id()}, timeSince=${timeSinceRemoved}ms, prevWS=${previousWorkspaceIndex}, currentWS=${WORKSPACE.index()}, isManual=${isManualMove}`);
+                
+                // Overview drag-drop: fast (<3s), different workspace, NOT a manual move
+                // Manual moves are handled by workspace-changed signal (500ms debounce)
+                const isOverviewDragDrop = previousWorkspaceIndex !== undefined && 
+                                          previousWorkspaceIndex !== WORKSPACE.index() &&
+                                          timeSinceRemoved < 3000 &&
+                                          !isManualMove;
+                
+                // Only check overflow for overview drag-drop operations
+                // Skip new windows (no previous workspace) to avoid infinite loops
+                if (hasValidDimensions && !windowing.isExcluded(WINDOW) && isOverviewDragDrop) {
+                    console.log(`[MOSAIC WM] window-added: Overview drag-drop - window ${WINDOW.get_id()} from workspace ${previousWorkspaceIndex} to ${WORKSPACE.index()}`);
+                    
+                    const canFit = tiling.canFitWindow(WINDOW, WORKSPACE, MONITOR);
+                    
+                    if (!canFit) {
+                        // Return to previous workspace
+                        console.log(`[MOSAIC WM] window-added: Doesn't fit - returning to workspace ${previousWorkspaceIndex}`);
+                        const previousWorkspace = this._workspaceManager.get_workspace_by_index(previousWorkspaceIndex);
+                        if (previousWorkspace) {
+                            WINDOW.change_workspace(previousWorkspace);
+                            this._windowPreviousWorkspace.delete(WINDOW.get_id());
+                            this._windowRemovedTimestamp.delete(WINDOW.get_id());
+                            return; // Don't tile, window is being moved back
+                        }
+                    } else {
+                        // Clean up tracking if window fits
+                        this._windowPreviousWorkspace.delete(WINDOW.get_id());
+                        this._windowRemovedTimestamp.delete(WINDOW.get_id());
+                        this._manualWorkspaceMove.delete(WINDOW.get_id());
+                    }
+                }
+                
+                // Tile the workspace
                 tiling.tileWorkspaceWindows(WORKSPACE, null, MONITOR, true);
             }
         }, constants.WINDOW_VALIDITY_CHECK_INTERVAL_MS);
@@ -373,11 +447,16 @@ export default class WindowMosaicExtension extends Extension {
      * Handler called when a window is removed from a workspace.
      * This is triggered by workspace.connect('window-removed').
      * Re-tiles the workspace and handles workspace navigation if empty.
+     * Also tracks the previous workspace for overview drag-drop.
      * 
      * @param {Meta.Workspace} workspace - The workspace that lost the window
      * @param {Meta.Window} window - The window that was removed
      */
     _windowRemoved = (workspace, window) => {
+        // Track previous workspace and timestamp for overview drag-drop detection
+        this._windowPreviousWorkspace.set(window.get_id(), workspace.index());
+        this._windowRemovedTimestamp.set(window.get_id(), Date.now());
+        
         let timeout = setInterval(() => {
             const WORKSPACE = window.get_workspace();
             const WINDOW = window;

@@ -672,31 +672,45 @@ export function canFitWindow(window, workspace, monitor) {
     // RULE 3: Try adding window to layout and see if it fits in available space
     // Only consider non-snapped windows for the layout
     const snappedIds = snappedWindows.map(s => s.window.get_id());
-    const newWindowId = window.get_id();
     
-    // CRITICAL: Exclude the new window from existing windows to prevent double-counting
-    // The new window might already be in working_info.windows when this is called
+    // Get all non-snapped windows (including the new window if it's already in the workspace)
+    // This handles both cases:
+    // - window-created: new window not yet in workspace
+    // - window-added: new window already in workspace (overview drag-drop)
     let windows = working_info.windows.filter(w => 
-        !snappedIds.includes(w.id) && w.id !== newWindowId
+        !snappedIds.includes(w.id)
     );
     
-    console.log(`[MOSAIC WM] canFitWindow: Current non-snapped windows: ${windows.length}, adding new window`);
+    console.log(`[MOSAIC WM] canFitWindow: Current non-snapped windows: ${windows.length}`);
     
-    // Use a very small conservative size for the test window
-    // The actual tile() function will resize windows to fit properly
-    // This prevents false overflow while still catching genuinely full workspaces
-    const estimatedWidth = 200;
-    const estimatedHeight = 200;
+    // Check if the window being tested is already in the list
+    // (happens with window-added signal from overview drag-drop)
+    const newWindowId = window.get_id();
+    const windowAlreadyInWorkspace = windows.some(w => w.id === newWindowId);
     
-    console.log(`[MOSAIC WM] canFitWindow: Using conservative test size: ${estimatedWidth}x${estimatedHeight}`);
-    
-    const newWindowDescriptor = new WindowDescriptor(window, windows.length);
-    newWindowDescriptor.width = estimatedWidth;
-    newWindowDescriptor.height = estimatedHeight;
-    
-    windows.push(newWindowDescriptor);
+    if (!windowAlreadyInWorkspace) {
+        // Window not yet in workspace (window-created case)
+        // Add a test window with conservative size
+        console.log('[MOSAIC WM] canFitWindow: Window not in workspace yet - adding test window');
+        
+        // Use a very small conservative size for the test window
+        // The actual tile() function will resize windows to fit properly
+        // This prevents false overflow while still catching genuinely full workspaces
+        const estimatedWidth = 200;
+        const estimatedHeight = 200;
+        
+        console.log(`[MOSAIC WM] canFitWindow: Using conservative test size: ${estimatedWidth}x${estimatedHeight}`);
+        
+        const newWindowDescriptor = new WindowDescriptor(window, windows.length);
+        newWindowDescriptor.width = estimatedWidth;
+        newWindowDescriptor.height = estimatedHeight;
+        
+        windows.push(newWindowDescriptor);
+    } else {
+        console.log('[MOSAIC WM] canFitWindow: Window already in workspace - checking current layout');
+    }
 
-    // Calculate layout with the new window in available space
+    // Calculate layout with all windows in available space
     const tile_result = tile(windows, availableSpace);
     
     console.log(`[MOSAIC WM] canFitWindow: Tile result overflow: ${tile_result.overflow}`);
