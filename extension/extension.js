@@ -94,10 +94,19 @@ export default class WindowMosaicExtension extends Extension {
      * @param {Meta.Window} window - The newly created window
      */
     _windowCreatedHandler = (_, window) => {
+        // Track if window opens maximized
+        if (windowing.isMaximizedOrFullscreen(window)) {
+            if (!this._windowsOpenedMaximized) {
+                this._windowsOpenedMaximized = new Set();
+            }
+            this._windowsOpenedMaximized.add(window.get_id());
+            console.log(`[MOSAIC WM] Window ${window.get_id()} opened maximized - marked for auto-tile check`);
+        }
+        
         let timeout = setInterval(() => {
-            let workspace = window.get_workspace();
             let monitor = window.get_monitor();
-            
+            let workspace = window.get_workspace();
+                
             // Ensure window is valid before any action
             if( monitor !== null &&
                 window.wm_class !== null &&
@@ -105,7 +114,7 @@ export default class WindowMosaicExtension extends Extension {
                 workspace.list_windows().length !== 0 &&
                 !window.is_hidden())
             {
-                clearTimeout(timeout);
+                clearInterval(timeout);
                 
                 // Check if window should be managed (includes blacklist check)
                 if(windowing.isExcluded(window)) {
@@ -122,8 +131,40 @@ export default class WindowMosaicExtension extends Extension {
                     // Only move to new workspace if there are OTHER windows (length > 1)
                     // If workspace is empty or only has this window, keep it here
                     if(workspaceWindows.length > 1) {
-                        console.log('[MOSAIC WM] Maximized window with other apps - moving to new workspace');
-                        windowing.moveOversizedWindow(window);
+                        // Check if window opened maximized (vs user maximizing it)
+                        const windowId = window.get_id();
+                        const openedMaximized = this._windowsOpenedMaximized && this._windowsOpenedMaximized.has(windowId);
+                        
+                        if (openedMaximized) {
+                            // Window OPENED maximized - check for tiled windows to auto-tile
+                            console.log('[MOSAIC WM] Opened maximized with tiled window - auto-tiling');
+                            
+                            // Check if there's an edge-tiled window
+                            const workspaceWindows = windowing.getMonitorWorkspaceWindows(workspace, monitor);
+                            const tiledWindows = workspaceWindows.filter(w => {
+                                if (w === window) return false;
+                                const state = edgeTiling.getWindowState(w);
+                                return state && state.zone !== edgeTiling.TileZone.NONE;
+                            });
+                            
+                            if (tiledWindows.length > 0) {
+                                // Auto-tile with existing tiled window
+                                console.log('[MOSAIC WM] Opened maximized with tiled window - auto-tiling');
+                                window.unmaximize();
+                                // Clear flag
+                                this._windowsOpenedMaximized.delete(windowId);
+                                // Auto-tiling will be triggered by unmaximize event
+                            } else {
+                                // No tiled window - move to new workspace
+                                console.log('[MOSAIC WM] Opened maximized without tiled window - moving to new workspace');
+                                windowing.moveOversizedWindow(window);
+                                this._windowsOpenedMaximized.delete(windowId);
+                            }
+                        } else {
+                            // User MAXIMIZED the window - always move to new workspace
+                            console.log('[MOSAIC WM] User maximized window - moving to new workspace');
+                            windowing.moveOversizedWindow(window);
+                        }
                         return;
                     } else {
                         console.log('[MOSAIC WM] Maximized window in empty workspace - keeping here');
@@ -275,85 +316,158 @@ export default class WindowMosaicExtension extends Extension {
      */
     _windowWorkspaceChangedHandler = (window) => {
         console.log(`[MOSAIC WM] workspace-changed fired for window ${window.get_id()}`);
+        const windowId = window.get_id();
         
-        // Mark this as a manual workspace move (not overview drag-drop)
-        this._manualWorkspaceMove.set(window.get_id(), true);
-        
-        // Store the previous workspace index so we can re-tile it after the move
-        const previousWorkspaceIndex = this._windowPreviousWorkspace.get(window.get_id());
-        
-        // Clear any existing debounce timeout
-        if (this._workspaceChangeTimeout) {
+        // Clear any existing debounce timeout for this window
+        if (this._workspaceChangeDebounce.has(windowId)) {
             console.log('[MOSAIC WM] Clearing previous debounce timeout');
-            clearTimeout(this._workspaceChangeTimeout);
+            GLib.source_remove(this._workspaceChangeDebounce.get(windowId));
+        }
+        
+        console.log(`[MOSAIC WM] workspace-changed fired for window ${windowId}`);
+        
+        // Skip overflow check for maximized windows - they were intentionally moved
+        if (windowing.isMaximizedOrFullscreen(window)) {
+            console.log('[MOSAIC WM] Skipping overflow check for maximized window');
+            return;
         }
         
         // Debounce: wait 500ms before checking overflow
-        // This allows user to navigate through multiple workspaces without interruption
-        this._workspaceChangeTimeout = setTimeout(() => {
-            const workspace = window.get_workspace();
+        // This prevents multiple rapid workspace changes from triggering overflow checks
+        const timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 500, () => {
+            this._workspaceChangeDebounce.delete(windowId);
+            
+            const currentWorkspace = window.get_workspace();
+            const currentWorkspaceIndex = currentWorkspace.index();
+            
+            console.log(`[MOSAIC WM] Debounce complete - checking overflow for window ${windowId} in workspace ${currentWorkspaceIndex}`);
+            
+            // Get the workspace the window is currently in
             const monitor = window.get_monitor();
             
-            console.log(`[MOSAIC WM] Debounce complete - checking overflow for window ${window.get_id()} in workspace ${workspace.index()}`);
-            
-            // Skip if window is excluded
-            if (windowing.isExcluded(window)) {
-                console.log('[MOSAIC WM] Window is excluded - skipping overflow check');
-                return;
-            }
-            
-            // Re-tile the source workspace to fill the gap left by the moved window
-            if (previousWorkspaceIndex !== undefined && previousWorkspaceIndex !== workspace.index()) {
-                const workspaceManager = global.workspace_manager;
-                const previousWorkspace = workspaceManager.get_workspace_by_index(previousWorkspaceIndex);
-                if (previousWorkspace) {
-                    console.log(`[MOSAIC WM] Re-tiling source workspace ${previousWorkspaceIndex} after window move`);
-                    tiling.tileWorkspaceWindows(previousWorkspace, null, monitor, false);
-                }
-            }
-            
-            // Check if target workspace has exactly one snapped window
-            const workspaceWindows = windowing.getMonitorWorkspaceWindows(workspace, monitor);
-            console.log(`[MOSAIC WM] Manual move: workspace has ${workspaceWindows.length} windows`);
-            
-            const edgeTiledWindows = workspaceWindows.filter(w => {
-                const tileState = edgeTiling.getWindowState(w);
-                const isEdgeTiled = tileState && tileState.zone !== edgeTiling.TileZone.NONE && w.get_id() !== window.get_id();
-                console.log(`[MOSAIC WM] Manual move: window ${w.get_id()} edgeTiled=${isEdgeTiled}, isTarget=${w.get_id() === window.get_id()}, willInclude=${isEdgeTiled}`);
-                return isEdgeTiled;
-            });
-            
-            console.log(`[MOSAIC WM] Manual move: found ${edgeTiledWindows.length} edge-tiled windows, total ${workspaceWindows.length} windows`);
-            
-            if (edgeTiledWindows.length === 1 && workspaceWindows.length === 2) {
-                // Try to tile with the edge-tiled window
-                console.log(`[MOSAIC WM] Manual move: Attempting to tile with edge-tiled window`);
-                const previousWorkspace = previousWorkspaceIndex !== undefined ? 
-                    global.workspace_manager.get_workspace_by_index(previousWorkspaceIndex) : null;
-                const tileSuccess = windowing.tryTileWithSnappedWindow(window, edgeTiledWindows[0], previousWorkspace);
-                
-                if (tileSuccess) {
-                    console.log('[MOSAIC WM] Manual move: Successfully tiled with edge-tiled window');
-                    return; // Don't do overflow check
-                }
-                // If tiling failed, window was already returned to previous workspace
-                if (previousWorkspace && window.get_workspace() === previousWorkspace) {
-                    console.log('[MOSAIC WM] Manual move: Tiling failed, window returned to previous workspace');
-                    return;
+            // Re-tile source workspace (where window came from)
+            if (this._lastWorkspaceIndex !== undefined && this._lastWorkspaceIndex !== currentWorkspaceIndex) {
+                const sourceWorkspace = global.workspace_manager.get_workspace_by_index(this._lastWorkspaceIndex);
+                if (sourceWorkspace) {
+                    console.log(`[MOSAIC WM] Re-tiling source workspace ${this._lastWorkspaceIndex} after window move`);
+                    tiling.tileWorkspaceWindows(sourceWorkspace, false, monitor, false);
                 }
             }
             
             // Check if window fits in new workspace
-            const canFit = tiling.canFitWindow(window, workspace, monitor);
+            const workspaceWindows = windowing.getMonitorWorkspaceWindows(currentWorkspace, monitor);
+            console.log(`[MOSAIC WM] Manual move: workspace has ${workspaceWindows.length} windows`);
+            
+            // Debug: log all windows
+            workspaceWindows.forEach(w => {
+                const state = edgeTiling.getWindowState(w);
+                const isEdgeTiled = state && state.zone !== edgeTiling.TileZone.NONE;
+                console.log(`[MOSAIC WM] Manual move: window ${w.get_id()} edgeTiled=${isEdgeTiled}, isTarget=${w === window}, willInclude=${isEdgeTiled}`);
+            });
+            
+            // Count edge-tiled windows
+            const edgeTiledCount = workspaceWindows.filter(w => {
+                const state = edgeTiling.getWindowState(w);
+                return state && state.zone !== edgeTiling.TileZone.NONE;
+            }).length;
+            
+            console.log(`[MOSAIC WM] Manual move: found ${edgeTiledCount} edge-tiled windows, total ${workspaceWindows.length} windows`);
+            
+            // Try to tile with edge-tiled window first
+            if (edgeTiledCount === 1 && workspaceWindows.length === 2) {
+                const edgeTiledWindow = workspaceWindows.find(w => {
+                    if (w === window) return false;
+                    const state = edgeTiling.getWindowState(w);
+                    return state && state.zone !== edgeTiling.TileZone.NONE;
+                });
+                
+                if (edgeTiledWindow) {
+                    console.log('[MOSAIC WM] Manual move: Attempting to tile with edge-tiled window');
+                    const success = windowing.tryTileWithSnappedWindow(window, edgeTiledWindow, null);
+                    if (success) {
+                        console.log('[MOSAIC WM] Manual move: Successfully tiled with edge-tiled window');
+                        return GLib.SOURCE_REMOVE;
+                    }
+                }
+            }
+            
+            // Check if window fits
+            const canFit = tiling.canFitWindow(window, currentWorkspace, monitor);
             
             if (!canFit) {
                 console.log('[MOSAIC WM] Manual move: window doesn\'t fit - moving to new workspace');
                 windowing.moveOversizedWindow(window);
             } else {
-                console.log('[MOSAIC WM] Manual move: window fits - tiling');
+                console.log('[MOSAIC WM] Manual move: window fits - tiling workspace');
+                tiling.tileWorkspaceWindows(currentWorkspace, window, monitor, false);
+            }
+            
+            return GLib.SOURCE_REMOVE;
+        });
+        
+        this._workspaceChangeDebounce.set(windowId, timeoutId);
+    }
+
+    /**
+     * Handler called when a grab operation ends (window is no longer being moved or resized).
+     * Finalizes drag-and-drop reordering or applies edge tiling.
+     * 
+     * @param {Meta.Display} _ - The display (unused)
+     * @param {Meta.Window} window - The window that was grabbed
+     * @param {number} grabpo - The grab operation type
+     */
+    _grabOpEndHandler = (_, window, grabpo) => {
+        // Edge tiling: stop polling cursor position and apply tiling if in a zone
+        if (this._edgeTilingPollId) {
+            GLib.source_remove(this._edgeTilingPollId);
+            this._edgeTilingPollId = null;
+        }
+        
+        if (this._draggedWindow) {
+            const workArea = this._draggedWindow.get_workspace().get_work_area_for_monitor(this._draggedWindow.get_monitor());
+            drawing.hideTilePreview(workArea);
+            
+            if (this._currentZone !== edgeTiling.TileZone.NONE) {
+                console.log(`[MOSAIC WM] Edge tiling: applying tile for zone ${this._currentZone}`);
+                edgeTiling.applyTile(this._draggedWindow, this._currentZone);
+            }
+            
+            this._draggedWindow = null;
+            this._currentZone = edgeTiling.TileZone.NONE;
+            edgeTiling.setEdgeTilingActive(false);
+        }
+        
+        // Finalize reordering if a drag was in progress
+        reordering.endDrag(window);
+
+        if(grabpo === 20481) { // When released from resizing
+            // Check if this is an edge-tiled window
+            const tileState = edgeTiling.getWindowState(window);
+            const isEdgeTiled = tileState && tileState.zone !== edgeTiling.TileZone.NONE;
+            
+            if (isEdgeTiled && (tileState.zone === edgeTiling.TileZone.LEFT_FULL || tileState.zone === edgeTiling.TileZone.RIGHT_FULL)) {
+                // Fix final sizes after resize to respect actual minimum sizes
+                console.log(`[MOSAIC WM] Resize ended for edge-tiled window - fixing final sizes`);
+                edgeTiling.fixTiledPairSizes(window, tileState.zone);
+            } else {
+                // Check if resize ended with overflow - move to new workspace
+                const workspace = window.get_workspace();
+                const monitor = window.get_monitor();
+                
+                if (this._resizeOverflowWindow === window) {
+                    const canFit = tiling.canFitWindow(window, workspace, monitor);
+                    
+                    if (!canFit) {
+                        console.log('[MOSAIC WM] Resize overflow confirmed - moving to new workspace');
+                        windowing.moveOversizedWindow(window);
+                        this._resizeOverflowWindow = null;
+                    }
+                }
+                
+                // Re-tile workspace after resize
                 tiling.tileWorkspaceWindows(workspace, window, monitor, false);
             }
-        }, 500); // 500ms debounce
+        }
     }
 
     /**
@@ -399,19 +513,15 @@ export default class WindowMosaicExtension extends Extension {
 
             if(mode === 2 || mode === 0) { // If the window was maximized
                 if(windowing.isMaximizedOrFullscreen(window) && windowing.getMonitorWorkspaceWindows(workspace, monitor).length > 1) {
-                    // If maximized/fullscreen (and not alone), move to new workspace and activate it if it is on the active workspace
+                    // User maximized the window - always move to new workspace
+                    console.log('[MOSAIC WM] User maximized window - moving to new workspace');
                     let newWorkspace = windowing.moveOversizedWindow(window);
-                    /* We mark the window as activated by using its id to index an array
-                        We put the value as the active workspace index so that if the workspace anatomy
-                        of the current workspace changes, it does not move the maximized window to an unrelated
-                        window.
-                    */
                     if(newWorkspace) {
                         this._maximizedWindows[id] = {
                             workspace: newWorkspace.index(),
                             monitor: monitor
-                        }; // Mark window as maximized
-                        tiling.tileWorkspaceWindows(workspace, false, monitor, false); // Sort the workspace where the window came from
+                        };
+                        tiling.tileWorkspaceWindows(workspace, false, monitor, false);
                     }
                 }
             } else if(false && (mode === 3 || mode === 1)) { // If the window was unmaximized
@@ -440,6 +550,15 @@ export default class WindowMosaicExtension extends Extension {
                 return;
             }
 
+            // Check if window is edge-tiled
+            let tileState = edgeTiling.getWindowState(window);
+            let isEdgeTiled = tileState && tileState.zone !== edgeTiling.TileZone.NONE;
+            
+            // Skip workspace tiling for edge-tiled windows - they have their own resize logic
+            if (isEdgeTiled) {
+                return;
+            }
+
             // Live resizing
             this._sizeChanged = true;
             
@@ -447,11 +566,9 @@ export default class WindowMosaicExtension extends Extension {
             let workspace = window.get_workspace();
             let monitor = window.get_monitor();
             
-            // Only check overflow if window is being actively resized (not maximized/edge-tiled)
+            // Only check overflow if window is being actively resized (not maximized)
             let workArea = workspace.get_work_area_for_monitor(monitor);
-            let tileState = edgeTiling.getWindowState(window);
-            let isEdgeTiled = tileState && tileState.zone !== edgeTiling.TileZone.NONE;
-            if (!windowing.isMaximizedOrFullscreen(window) && !isEdgeTiled) {
+            if (!windowing.isMaximizedOrFullscreen(window)) {
                 let canFit = tiling.canFitWindow(window, workspace, monitor);
                 
                 if (!canFit) {
@@ -657,33 +774,6 @@ export default class WindowMosaicExtension extends Extension {
             reordering.stopDrag(window, true);
     }
 
-    _sizeChangeHandler = (_, window, mode) => {
-        let workspace = window.get_workspace();
-        let monitor = window.get_monitor();
-
-        if (!windowing.isExcluded(window)) {
-            if (mode === 0 || mode === 2) { // Maximize
-                const workspaceWindows = windowing.getMonitorWorkspaceWindows(workspace, monitor);
-                if (workspaceWindows.length > 1) {
-                    console.log('[MOSAIC WM] Window maximized - moving to new workspace');
-                    let newWorkspace = windowing.moveOversizedWindow(window);
-                    if (newWorkspace) {
-                        tiling.tileWorkspaceWindows(workspace, false, monitor, false);
-                    }
-                }
-            } else if (mode === 1 || mode === 3) { // Unmaximize
-                // Skip tiling if this window is being restored from edge tiling
-                if (this._skipNextTiling === window.get_id()) {
-                    console.log(`[MOSAIC WM] Skipping tiling for unmaximized window ${window.get_id()} (restoring from edge tiling)`);
-                    return;
-                }
-                
-                console.log('[MOSAIC WM] Window unmaximized - tiling workspace');
-                tiling.tileWorkspaceWindows(workspace, window, monitor, false);
-            }
-        }
-    }
-
     /**
      * Handler called when a window is added to a workspace.
      * This is triggered by workspace.connect('window-added').
@@ -755,6 +845,14 @@ export default class WindowMosaicExtension extends Extension {
                     const canFit = tiling.canFitWindow(WINDOW, WORKSPACE, MONITOR);
                     
                     if (!canFit) {
+                        // Skip returning maximized windows - they were intentionally moved
+                        if (windowing.isMaximizedOrFullscreen(WINDOW)) {
+                            console.log('[MOSAIC WM] window-added: Maximized window doesn\'t fit but keeping in new workspace');
+                            this._windowPreviousWorkspace.delete(WINDOW.get_id());
+                            this._windowRemovedTimestamp.delete(WINDOW.get_id());
+                            return;
+                        }
+                        
                         // Return to previous workspace
                         console.log(`[MOSAIC WM] window-added: Doesn't fit - returning to workspace ${previousWorkspaceIndex}`);
                         const previousWorkspace = this._workspaceManager.get_workspace_by_index(previousWorkspaceIndex);
@@ -824,6 +922,11 @@ export default class WindowMosaicExtension extends Extension {
 
     enable() {
         console.log("[MOSAIC WM]: Starting Mosaic layout manager.");
+        
+        // Initialize tracking Maps and Sets FIRST
+        this._windowWorkspaceSignals = new Map();
+        this._workspaceChangeDebounce = new Map();
+        this._windowsOpenedMaximized = new Set();
         
         // Disable native edge tiling and conflicting keybindings
         this._settingsOverrider = new SettingsOverrider();
@@ -916,7 +1019,7 @@ export default class WindowMosaicExtension extends Extension {
         });
         this._windowWorkspaceSignals.clear();
         
-        // Clear debounce timeout
+        // Clear debounce timeouts
         if (this._workspaceChangeTimeout) {
             clearTimeout(this._workspaceChangeTimeout);
             this._workspaceChangeTimeout = null;

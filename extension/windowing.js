@@ -174,19 +174,25 @@ export function tryTileWithSnappedWindow(window, edgeTiledWindow, previousWorksp
         return false;
     }
     
-    // Calculate available tile space (half screen)
-    const halfWidth = Math.floor(workArea.width / 2);
+    // Calculate available tile space based on ACTUAL existing window width
+    // (not assumed 50% - window may have been resized)
+    const existingFrame = edgeTiledWindow.get_frame_rect();
+    const existingWidth = existingFrame.width;
+    const availableWidth = workArea.width - existingWidth;
+    
+    console.log(`[MOSAIC WM] Auto-tiling: existing window width=${existingWidth}px, available=${availableWidth}px`);
+    
     let targetX, targetY, targetWidth, targetHeight;
     
     if (direction === 'left') {
         targetX = workArea.x;
         targetY = workArea.y;
-        targetWidth = halfWidth;
+        targetWidth = availableWidth;
         targetHeight = workArea.height;
     } else { // right
-        targetX = workArea.x + halfWidth;
+        targetX = workArea.x + existingWidth;
         targetY = workArea.y;
-        targetWidth = workArea.width - halfWidth;
+        targetWidth = availableWidth;
         targetHeight = workArea.height;
     }
     

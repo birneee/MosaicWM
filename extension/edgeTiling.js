@@ -1,5 +1,6 @@
 import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
+import * as tiling from './tiling.js';
 
 /**
  * Edge Tiling Zones
@@ -19,12 +20,17 @@ export const TileZone = {
     FULLSCREEN: 7
 };
 
-// Store window states (pre-tile position/size)
-const _windowStates = new Map();
+// Module state for window states (pre-tile position/size)
+const _windowStates = new Map(); // windowId -> { x, y, width, height, zone }
 
-// Track if we're currently in an edge tiling operation
+// Module state for edge tiling activity
 let _isEdgeTilingActive = false;
 let _activeEdgeTilingWindow = null;
+
+// Module state for interactive resize
+const _resizeListeners = new Map(); // windowId -> signalId
+let _isResizing = false; // Flag to prevent recursive resize
+const _previousSizes = new Map(); // windowId -> { width, height } for delta tracking
 
 /**
  * Check if edge tiling is currently active (during drag)
@@ -142,29 +148,70 @@ export function detectZone(cursorX, cursorY, workArea, workspace) {
 }
 
 /**
- * Get rectangle for a specific tile zone
+ * Get rectangle for a tile zone
  * @param {number} zone - TileZone enum value
  * @param {Object} workArea - Work area rectangle
- * @returns {Object|null} Rectangle {x, y, width, height} or null
+ * @param {Meta.Window} [windowToTile] - Optional: window being tiled (to check for existing tiled windows)
+ * @returns {Object|null} Rectangle {x, y, width, height}
  */
-export function getZoneRect(zone, workArea) {
-    const halfW = Math.floor(workArea.width / 2);
-    const halfH = Math.floor(workArea.height / 2);
+export function getZoneRect(zone, workArea, windowToTile = null) {
+    if (!workArea) return null;
     
-    switch (zone) {
+    // Check if workspace has existing tiled window on opposite side
+    let existingWidth = null;
+    let existingX = null;
+    
+    if (windowToTile) {
+        const workspace = windowToTile.get_workspace();
+        const monitor = windowToTile.get_monitor();
+        const workspaceWindows = workspace.list_windows().filter(w => 
+            w.get_monitor() === monitor && 
+            w.get_id() !== windowToTile.get_id() &&
+            !w.is_hidden() &&
+            w.get_window_type() === Meta.WindowType.NORMAL
+        );
+        
+        // Find existing tiled window on opposite side
+        let oppositeZone = null;
+        if (zone === TileZone.LEFT_FULL) {
+            oppositeZone = TileZone.RIGHT_FULL;
+        } else if (zone === TileZone.RIGHT_FULL) {
+            oppositeZone = TileZone.LEFT_FULL;
+        }
+        
+        if (oppositeZone) {
+            const existingWindow = workspaceWindows.find(w => {
+                const state = getWindowState(w);
+                return state && state.zone === oppositeZone;
+            });
+            
+            if (existingWindow) {
+                const frame = existingWindow.get_frame_rect();
+                existingWidth = frame.width;
+                existingX = frame.x;
+                console.log(`[MOSAIC WM] getZoneRect: Found existing tiled window with width ${existingWidth}px`);
+            }
+        }
+    }
+    
+    const halfWidth = Math.floor(workArea.width / 2);
+    const halfHeight = Math.floor(workArea.height / 2);
+    
+    switch(zone) {
         case TileZone.LEFT_FULL:
-            return { 
-                x: workArea.x, 
-                y: workArea.y, 
-                width: halfW, 
-                height: workArea.height 
+            return {
+                x: workArea.x,
+                y: workArea.y,
+                width: existingWidth ? (workArea.width - existingWidth) : halfWidth,
+                height: workArea.height
             };
+            
         case TileZone.RIGHT_FULL:
-            return { 
-                x: workArea.x + halfW, 
-                y: workArea.y, 
-                width: workArea.width - halfW, 
-                height: workArea.height 
+            return {
+                x: existingWidth ? (workArea.x + existingWidth) : (workArea.x + halfWidth),
+                y: workArea.y,
+                width: existingWidth ? (workArea.width - existingWidth) : (workArea.width - halfWidth),
+                height: workArea.height
             };
         case TileZone.TOP_LEFT:
             return { 
@@ -400,7 +447,7 @@ export function applyTile(window, zone, workArea) {
         return true;
     }
     
-    const rect = getZoneRect(zone, workArea);
+    const rect = getZoneRect(zone, workArea, window);
     if (!rect) {
         console.log(`[MOSAIC WM] Invalid zone ${zone}`);
         return false;
@@ -423,7 +470,10 @@ export function applyTile(window, zone, workArea) {
         
         // Note: Square corners feature deferred - requires GLSL shaders
         // See interactive_resize_task.md for future implementation
-
+        
+        // Setup resize listener for interactive resize
+        setupResizeListener(window);
+        
         // Update state
         const state = _windowStates.get(winId);
         if (state) {
@@ -453,6 +503,9 @@ export function removeTile(window, callback = null) {
     }
     
     console.log(`[MOSAIC WM] removeTile: Removing tile from window ${winId}, zone=${savedState.zone}`);
+    
+    // Remove resize listener
+    removeResizeListener(window);
     
     // Note: Square corners restoration deferred
 
@@ -509,4 +562,320 @@ export function removeTile(window, callback = null) {
  */
 export function clearAllStates() {
     _windowStates.clear();
+}
+
+// ============================================================================
+// INTERACTIVE RESIZE SYSTEM
+// ============================================================================
+
+/**
+ * Setup resize listener for edge-tiled window
+ * @param {Meta.Window} window
+ */
+function setupResizeListener(window) {
+    const winId = window.get_id();
+    
+    if (_resizeListeners.has(winId)) {
+        return; // Already listening
+    }
+    
+    const signalId = window.connect('size-changed', () => {
+        handleWindowResize(window);
+    });
+    
+    _resizeListeners.set(winId, signalId);
+    console.log(`[MOSAIC WM] Setup resize listener for window ${winId}`);
+}
+
+/**
+ * Remove resize listener from window
+ * @param {Meta.Window} window
+ */
+function removeResizeListener(window) {
+    const winId = window.get_id();
+    const signalId = _resizeListeners.get(winId);
+    
+    if (signalId) {
+        window.disconnect(signalId);
+        _resizeListeners.delete(winId);
+        console.log(`[MOSAIC WM] Removed resize listener from window ${winId}`);
+    }
+}
+
+/**
+ * Handle window resize event
+ * @param {Meta.Window} window
+ */
+function handleWindowResize(window) {
+    // Check if window is edge-tiled
+    const state = getWindowState(window);
+    if (!state || state.zone === TileZone.NONE) {
+        return;
+    }
+    
+    // Ignore programmatic resizes (from our own code)
+    if (_isResizing) {
+        return;
+    }
+    
+    console.log(`[MOSAIC WM] Resize detected on edge-tiled window ${window.get_id()}, zone=${state.zone}`);
+    
+    // Handle resize based on zone
+    if (state.zone === TileZone.LEFT_FULL || state.zone === TileZone.RIGHT_FULL) {
+        handleHorizontalResize(window, state.zone);
+    }
+    // TODO: Handle quarter tiles in Phase 2
+}
+
+/**
+ * Handle horizontal resize between LEFT_FULL and RIGHT_FULL windows
+ * @param {Meta.Window} window - Window being resized
+ * @param {number} zone - TileZone of the window
+ */
+function handleHorizontalResize(window, zone) {
+    const workspace = window.get_workspace();
+    const monitor = window.get_monitor();
+    const workArea = workspace.get_work_area_for_monitor(monitor);
+    
+    // Find adjacent window
+    const adjacentWindow = getAdjacentWindow(window, workspace, monitor, zone);
+    
+    if (!adjacentWindow) {
+        // No adjacent window - resize affects mosaic
+        // But only if we're not already in a resize operation
+        if (!_isResizing) {
+            console.log(`[MOSAIC WM] No adjacent window - resize affects mosaic`);
+            handleResizeWithMosaic(window, workspace, monitor);
+        }
+        return;
+    }
+    
+    // Resize both windows proportionally
+    console.log(`[MOSAIC WM] Resizing tiled pair`);
+    resizeTiledPair(window, adjacentWindow, workArea, zone);
+}
+
+/**
+ * Find adjacent edge-tiled window
+ * @param {Meta.Window} window
+ * @param {Meta.Workspace} workspace
+ * @param {number} monitor
+ * @param {number} zone
+ * @returns {Meta.Window|null}
+ */
+function getAdjacentWindow(window, workspace, monitor, zone) {
+    const edgeTiledWindows = getEdgeTiledWindows(workspace, monitor);
+    const windowId = window.get_id();
+    
+    // Find opposite side window
+    const targetZone = (zone === TileZone.LEFT_FULL) ? TileZone.RIGHT_FULL : TileZone.LEFT_FULL;
+    
+    const adjacent = edgeTiledWindows.find(w => 
+        w.window.get_id() !== windowId && w.zone === targetZone
+    );
+    
+    return adjacent ? adjacent.window : null;
+}
+
+/**
+ * Resize a pair of tiled windows proportionally
+ * @param {Meta.Window} resizedWindow - Window that was resized by user
+ * @param {Meta.Window} adjacentWindow - Window on opposite side
+ * @param {Object} workArea - Work area rectangle
+ * @param {number} zone - Zone of resized window
+ */
+function resizeTiledPair(resizedWindow, adjacentWindow, workArea, zone) {
+    const resizedId = resizedWindow.get_id();
+    const adjacentId = adjacentWindow.get_id();
+    const resizedFrame = resizedWindow.get_frame_rect();
+    const adjacentFrame = adjacentWindow.get_frame_rect();
+    
+    // Get previous size
+    const previousSize = _previousSizes.get(resizedId);
+    
+    if (!previousSize) {
+        // First resize - just store current size
+        _previousSizes.set(resizedId, { width: resizedFrame.width, height: resizedFrame.height });
+        _previousSizes.set(adjacentId, { width: adjacentFrame.width, height: resizedFrame.height });
+        console.log(`[MOSAIC WM] Stored initial sizes: resized=${resizedFrame.width}px, adjacent=${adjacentFrame.width}px`);
+        return;
+    }
+    
+    // Calculate delta (how much the window changed)
+    const deltaWidth = resizedFrame.width - previousSize.width;
+    
+    if (deltaWidth === 0) {
+        return; // No change
+    }
+    
+    console.log(`[MOSAIC WM] Resize delta: ${deltaWidth}px (was ${previousSize.width}px, now ${resizedFrame.width}px)`);
+    
+    // Apply opposite delta to adjacent window
+    const newAdjacentWidth = adjacentFrame.width - deltaWidth;
+    
+    // Check minimums
+    const minWidth = 400;
+    if (newAdjacentWidth < minWidth) {
+        console.log(`[MOSAIC WM] Adjacent window would be too small (${newAdjacentWidth}px < ${minWidth}px) - clamping`);
+        // Clamp: adjacent stays at minimum, resized gets the rest
+        const clampedAdjacentWidth = minWidth;
+        const clampedResizedWidth = workArea.width - clampedAdjacentWidth;
+        
+        _isResizing = true;
+        try {
+            // Determine which is left/right
+            const isResizedLeft = (zone === TileZone.LEFT_FULL);
+            
+            if (isResizedLeft) {
+                resizedWindow.move_resize_frame(false, workArea.x, workArea.y, clampedResizedWidth, workArea.height);
+                adjacentWindow.move_resize_frame(false, workArea.x + clampedResizedWidth, workArea.y, clampedAdjacentWidth, workArea.height);
+            } else {
+                adjacentWindow.move_resize_frame(false, workArea.x, workArea.y, clampedAdjacentWidth, workArea.height);
+                resizedWindow.move_resize_frame(false, workArea.x + clampedAdjacentWidth, workArea.y, clampedResizedWidth, workArea.height);
+            }
+            
+            // Update stored sizes
+            _previousSizes.set(resizedId, { width: clampedResizedWidth, height: workArea.height });
+            _previousSizes.set(adjacentId, { width: clampedAdjacentWidth, height: workArea.height });
+        } finally {
+            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+                _isResizing = false;
+                return GLib.SOURCE_REMOVE;
+            });
+        }
+        return;
+    }
+    
+    // Apply delta resize
+    _isResizing = true;
+    
+    try {
+        // Determine which is left/right
+        const isResizedLeft = (zone === TileZone.LEFT_FULL);
+        
+        if (isResizedLeft) {
+            // Resized is left, adjacent is right
+            // IMPORTANT: Call move_frame() before move_resize_frame() (gTile solution)
+            resizedWindow.move_frame(false, workArea.x, workArea.y);
+            resizedWindow.move_resize_frame(false, workArea.x, workArea.y, resizedFrame.width, workArea.height);
+            
+            adjacentWindow.move_frame(false, workArea.x + resizedFrame.width, workArea.y);
+            adjacentWindow.move_resize_frame(false, workArea.x + resizedFrame.width, workArea.y, newAdjacentWidth, workArea.height);
+        } else {
+            // Resized is right, adjacent is left
+            // IMPORTANT: Call move_frame() before move_resize_frame() (gTile solution)
+            adjacentWindow.move_frame(false, workArea.x, workArea.y);
+            adjacentWindow.move_resize_frame(false, workArea.x, workArea.y, newAdjacentWidth, workArea.height);
+            
+            resizedWindow.move_frame(false, workArea.x + newAdjacentWidth, workArea.y);
+            resizedWindow.move_resize_frame(false, workArea.x + newAdjacentWidth, workArea.y, resizedFrame.width, workArea.height);
+        }
+        
+        console.log(`[MOSAIC WM] Applied delta resize: resized=${resizedFrame.width}px, adjacent=${newAdjacentWidth}px, total=${resizedFrame.width + newAdjacentWidth}px`);
+        
+        // Update stored sizes
+        _previousSizes.set(resizedId, { width: resizedFrame.width, height: workArea.height });
+        _previousSizes.set(adjacentId, { width: newAdjacentWidth, height: workArea.height });
+    } finally {
+        // Use timeout to reset flag after resize events have been processed
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+            _isResizing = false;
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+}
+
+/**
+ * Handle resize when there's no adjacent tiled window (affects mosaic)
+ * @param {Meta.Window} window
+ * @param {Meta.Workspace} workspace
+ * @param {number} monitor
+ */
+function handleResizeWithMosaic(window, workspace, monitor) {
+    // Check if workspace is fully occupied by edge-tiled windows
+    const edgeTiledWindows = getEdgeTiledWindows(workspace, monitor);
+    
+    // If both sides are tiled, no mosaic to adjust
+    const hasLeft = edgeTiledWindows.some(w => 
+        w.zone === TileZone.LEFT_FULL || w.zone === TileZone.TOP_LEFT || w.zone === TileZone.BOTTOM_LEFT
+    );
+    const hasRight = edgeTiledWindows.some(w => 
+        w.zone === TileZone.RIGHT_FULL || w.zone === TileZone.TOP_RIGHT || w.zone === TileZone.BOTTOM_RIGHT
+    );
+    
+    if (hasLeft && hasRight) {
+        console.log(`[MOSAIC WM] Workspace fully occupied - no mosaic to re-tile`);
+        return;
+    }
+    
+    // Recalculate remaining space and re-tile mosaic
+    console.log(`[MOSAIC WM] Edge-tiled window resized - re-tiling mosaic`);
+    tiling.tileWorkspaceWindows(workspace, null, monitor, false);
+}
+
+/**
+ * Fix tiled pair sizes after resize ends
+ * Adjusts windows to fill workspace width, respecting actual minimum sizes
+ * @param {Meta.Window} resizedWindow - Window that was resized
+ * @param {number} zone - Zone of resized window
+ */
+export function fixTiledPairSizes(resizedWindow, zone) {
+    const workspace = resizedWindow.get_workspace();
+    const monitor = resizedWindow.get_monitor();
+    const workArea = workspace.get_work_area_for_monitor(monitor);
+    
+    // Find adjacent window
+    const adjacentWindow = getAdjacentWindow(resizedWindow, workspace, monitor, zone);
+    
+    if (!adjacentWindow) {
+        console.log(`[MOSAIC WM] No adjacent window found for size fix`);
+        return;
+    }
+    
+    const resizedFrame = resizedWindow.get_frame_rect();
+    const adjacentFrame = adjacentWindow.get_frame_rect();
+    
+    // Calculate actual total width
+    const totalWidth = resizedFrame.width + adjacentFrame.width;
+    
+    // Check if there's a gap (total < workArea.width)
+    if (totalWidth < workArea.width) {
+        const gap = workArea.width - totalWidth;
+        console.log(`[MOSAIC WM] Detected gap of ${gap}px - adjusting resized window`);
+        
+        // Give the gap to the resized window (the one that grew)
+        const newResizedWidth = resizedFrame.width + gap;
+        
+        _isResizing = true;
+        try {
+            const isResizedLeft = (zone === TileZone.LEFT_FULL);
+            
+            if (isResizedLeft) {
+                resizedWindow.move_frame(false, workArea.x, workArea.y);
+                resizedWindow.move_resize_frame(false, workArea.x, workArea.y, newResizedWidth, workArea.height);
+                
+                adjacentWindow.move_frame(false, workArea.x + newResizedWidth, workArea.y);
+                adjacentWindow.move_resize_frame(false, workArea.x + newResizedWidth, workArea.y, adjacentFrame.width, workArea.height);
+            } else {
+                adjacentWindow.move_frame(false, workArea.x, workArea.y);
+                adjacentWindow.move_resize_frame(false, workArea.x, workArea.y, adjacentFrame.width, workArea.height);
+                
+                resizedWindow.move_frame(false, workArea.x + adjacentFrame.width, workArea.y);
+                resizedWindow.move_resize_frame(false, workArea.x + adjacentFrame.width, workArea.y, newResizedWidth, workArea.height);
+            }
+            
+            console.log(`[MOSAIC WM] Fixed sizes: resized=${newResizedWidth}px, adjacent=${adjacentFrame.width}px, total=${newResizedWidth + adjacentFrame.width}px`);
+            
+            // Update stored sizes
+            _previousSizes.set(resizedWindow.get_id(), { width: newResizedWidth, height: workArea.height });
+            _previousSizes.set(adjacentWindow.get_id(), { width: adjacentFrame.width, height: workArea.height });
+        } finally {
+            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+                _isResizing = false;
+                return GLib.SOURCE_REMOVE;
+            });
+        }
+    } else {
+        console.log(`[MOSAIC WM] No gap detected - sizes are correct`);
+    }
 }
