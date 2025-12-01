@@ -21,7 +21,6 @@ import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
-import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as windowing from './windowing.js';
 import * as tiling from './tiling.js';
 import * as drawing from './drawing.js';
@@ -225,6 +224,9 @@ export default class WindowMosaicExtension extends Extension {
         // Disconnect workspace-changed signal
         this._disconnectWindowWorkspaceSignal(window);
         
+        // Clear edge tiling state
+        edgeTiling.clearWindowState(window);
+        
         // Clean up tracking Maps to prevent memory leaks
         this._windowPreviousWorkspace.delete(windowId);
         this._windowRemovedTimestamp.delete(windowId);
@@ -416,59 +418,7 @@ export default class WindowMosaicExtension extends Extension {
      * @param {Meta.Window} window - The window that was grabbed
      * @param {number} grabpo - The grab operation type
      */
-    _grabOpEndHandler = (_, window, grabpo) => {
-        // Edge tiling: stop polling cursor position and apply tiling if in a zone
-        if (this._edgeTilingPollId) {
-            GLib.source_remove(this._edgeTilingPollId);
-            this._edgeTilingPollId = null;
-        }
-        
-        if (this._draggedWindow) {
-            const workArea = this._draggedWindow.get_workspace().get_work_area_for_monitor(this._draggedWindow.get_monitor());
-            drawing.hideTilePreview(workArea);
-            
-            if (this._currentZone !== edgeTiling.TileZone.NONE) {
-                console.log(`[MOSAIC WM] Edge tiling: applying tile for zone ${this._currentZone}`);
-                edgeTiling.applyTile(this._draggedWindow, this._currentZone);
-            }
-            
-            this._draggedWindow = null;
-            this._currentZone = edgeTiling.TileZone.NONE;
-            edgeTiling.setEdgeTilingActive(false);
-        }
-        
-        // Finalize reordering if a drag was in progress
-        reordering.endDrag(window);
 
-        if(grabpo === 20481) { // When released from resizing
-            // Check if this is an edge-tiled window
-            const tileState = edgeTiling.getWindowState(window);
-            const isEdgeTiled = tileState && tileState.zone !== edgeTiling.TileZone.NONE;
-            
-            if (isEdgeTiled && (tileState.zone === edgeTiling.TileZone.LEFT_FULL || tileState.zone === edgeTiling.TileZone.RIGHT_FULL)) {
-                // Fix final sizes after resize to respect actual minimum sizes
-                console.log(`[MOSAIC WM] Resize ended for edge-tiled window - fixing final sizes`);
-                edgeTiling.fixTiledPairSizes(window, tileState.zone);
-            } else {
-                // Check if resize ended with overflow - move to new workspace
-                const workspace = window.get_workspace();
-                const monitor = window.get_monitor();
-                
-                if (this._resizeOverflowWindow === window) {
-                    const canFit = tiling.canFitWindow(window, workspace, monitor);
-                    
-                    if (!canFit) {
-                        console.log('[MOSAIC WM] Resize overflow confirmed - moving to new workspace');
-                        windowing.moveOversizedWindow(window);
-                        this._resizeOverflowWindow = null;
-                    }
-                }
-                
-                // Re-tile workspace after resize
-                tiling.tileWorkspaceWindows(workspace, window, monitor, false);
-            }
-        }
-    }
 
     /**
      * Connect workspace-changed signal for a window.
@@ -658,7 +608,7 @@ export default class WindowMosaicExtension extends Extension {
                     console.log(`[MOSAIC WM] Edge tiling: detected zone ${zone}`);
                     this._currentZone = zone;
                     edgeTiling.setEdgeTilingActive(true, this._draggedWindow);
-                    drawing.showTilePreview(zone, workArea);
+                    drawing.showTilePreview(zone, workArea, this._draggedWindow);
                 } else if (zone === edgeTiling.TileZone.NONE && this._currentZone !== edgeTiling.TileZone.NONE) {
                     // Exiting edge tiling zone
                     console.log(`[MOSAIC WM] Edge tiling: exiting zone, wasInEdgeTiling=${wasInEdgeTiling}`);
@@ -749,6 +699,21 @@ export default class WindowMosaicExtension extends Extension {
             
             // Log grab operation for debugging
             console.log(`[MOSAIC WM] Grab operation ended: ${grabpo}`);
+            
+            // Handle resize end for all resize grab operations (4097, 8193, 20481)
+            const isResizeEnd = (grabpo === 4097 || grabpo === 8193 || grabpo === 20481);
+            
+            if(isResizeEnd) {
+                // Check if this is an edge-tiled window
+                const tileState = edgeTiling.getWindowState(window);
+                const isEdgeTiled = tileState && tileState.zone !== edgeTiling.TileZone.NONE;
+                
+                if (isEdgeTiled && (tileState.zone === edgeTiling.TileZone.LEFT_FULL || tileState.zone === edgeTiling.TileZone.RIGHT_FULL)) {
+                    // Fix final sizes after resize to respect actual minimum sizes
+                    console.log(`[MOSAIC WM] Resize ended (grabpo=${grabpo}) for edge-tiled window - fixing final sizes`);
+                    edgeTiling.fixTiledPairSizes(window, tileState.zone);
+                }
+            }
             
             if( (grabpo === 1 || grabpo === 1025) && // When a window has moved
                 !(windowing.isMaximizedOrFullscreen(window)) &&

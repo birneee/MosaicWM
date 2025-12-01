@@ -58,12 +58,13 @@ export function removeBoxes() {
  * Show edge tiling preview overlay
  * @param {number} zone - TileZone enum value
  * @param {Object} workArea - Work area rectangle
+ * @param {Meta.Window} [window] - Optional window being tiled (for available space calculation)
  */
-export function showTilePreview(zone, workArea) {
+export function showTilePreview(zone, workArea, window = null) {
     // Hide mosaic preview when showing edge tiling preview
     removeBoxes();
     
-    const rect = edgeTiling.getZoneRect(zone, workArea);
+    const rect = edgeTiling.getZoneRect(zone, workArea, window);
     if (!rect) return;
     
     if (!_tilePreview) {

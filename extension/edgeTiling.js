@@ -572,7 +572,7 @@ export function clearAllStates() {
  * Setup resize listener for edge-tiled window
  * @param {Meta.Window} window
  */
-function setupResizeListener(window) {
+export function setupResizeListener(window) {
     const winId = window.get_id();
     
     if (_resizeListeners.has(winId)) {
@@ -691,60 +691,51 @@ function resizeTiledPair(resizedWindow, adjacentWindow, workArea, zone) {
     const adjacentFrame = adjacentWindow.get_frame_rect();
     
     // Get previous size
-    const previousSize = _previousSizes.get(resizedId);
+    const previousState = _previousSizes.get(resizedId);
     
-    if (!previousSize) {
-        // First resize - just store current size
-        _previousSizes.set(resizedId, { width: resizedFrame.width, height: resizedFrame.height });
-        _previousSizes.set(adjacentId, { width: adjacentFrame.width, height: resizedFrame.height });
-        console.log(`[MOSAIC WM] Stored initial sizes: resized=${resizedFrame.width}px, adjacent=${adjacentFrame.width}px`);
+    if (!previousState) {
+        // First resize - just store current size and position
+        _previousSizes.set(resizedId, { width: resizedFrame.width, height: resizedFrame.height, x: resizedFrame.x });
+        _previousSizes.set(adjacentId, { width: adjacentFrame.width, height: resizedFrame.height, x: adjacentFrame.x });
+        console.log(`[MOSAIC WM] Stored initial states: resized=${resizedFrame.width}px@${resizedFrame.x}, adjacent=${adjacentFrame.width}px@${adjacentFrame.x}`);
         return;
+    }
+    
+    // Check if resize is on the shared edge (inner edge) or outer edge
+    // LEFT_FULL: Inner edge is Right. If X changed, it was Left edge (outer).
+    // RIGHT_FULL: Inner edge is Left. If X stayed same, it was Right edge (outer).
+    const isLeftWindow = (zone === TileZone.LEFT_FULL);
+    const xChanged = (resizedFrame.x !== previousState.x);
+    
+    const isOuterEdgeResize = (isLeftWindow && xChanged) || (!isLeftWindow && !xChanged);
+    
+    if (isOuterEdgeResize) {
+        console.log(`[MOSAIC WM] Outer edge resize detected - will adjust adjacent window to fill workspace`);
     }
     
     // Calculate delta (how much the window changed)
-    const deltaWidth = resizedFrame.width - previousSize.width;
+    const deltaWidth = resizedFrame.width - previousState.width;
     
-    if (deltaWidth === 0) {
-        return; // No change
-    }
+    // NOTE: We don't return early on deltaWidth === 0 because we might need to fix gaps
     
-    console.log(`[MOSAIC WM] Resize delta: ${deltaWidth}px (was ${previousSize.width}px, now ${resizedFrame.width}px)`);
+    console.log(`[MOSAIC WM] Resize delta: ${deltaWidth}px (was ${previousState.width}px, now ${resizedFrame.width}px)`);
     
-    // Apply opposite delta to adjacent window
-    const newAdjacentWidth = adjacentFrame.width - deltaWidth;
-    
-    // Check minimums
+    // Check MAXIMUM width constraint to prevent adjacent window from becoming too small
+    // Maximum width = total width - minimum width for adjacent window
     const minWidth = 400;
-    if (newAdjacentWidth < minWidth) {
-        console.log(`[MOSAIC WM] Adjacent window would be too small (${newAdjacentWidth}px < ${minWidth}px) - clamping`);
-        // Clamp: adjacent stays at minimum, resized gets the rest
-        const clampedAdjacentWidth = minWidth;
-        const clampedResizedWidth = workArea.width - clampedAdjacentWidth;
-        
-        _isResizing = true;
-        try {
-            // Determine which is left/right
-            const isResizedLeft = (zone === TileZone.LEFT_FULL);
-            
-            if (isResizedLeft) {
-                resizedWindow.move_resize_frame(false, workArea.x, workArea.y, clampedResizedWidth, workArea.height);
-                adjacentWindow.move_resize_frame(false, workArea.x + clampedResizedWidth, workArea.y, clampedAdjacentWidth, workArea.height);
-            } else {
-                adjacentWindow.move_resize_frame(false, workArea.x, workArea.y, clampedAdjacentWidth, workArea.height);
-                resizedWindow.move_resize_frame(false, workArea.x + clampedAdjacentWidth, workArea.y, clampedResizedWidth, workArea.height);
-            }
-            
-            // Update stored sizes
-            _previousSizes.set(resizedId, { width: clampedResizedWidth, height: workArea.height });
-            _previousSizes.set(adjacentId, { width: clampedAdjacentWidth, height: workArea.height });
-        } finally {
-            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
-                _isResizing = false;
-                return GLib.SOURCE_REMOVE;
-            });
-        }
+    const maxResizedWidth = workArea.width - minWidth;
+    
+    // If we've hit the maximum, STOP trying to resize (prevents jitter)
+    // The final adjustment will happen when user releases the mouse
+    if (resizedFrame.width > maxResizedWidth) {
+        console.log(`[MOSAIC WM] Maximum width reached (${resizedFrame.width}px > ${maxResizedWidth}px) - stopping resize`);
+        // Don't update _previousSizes so next event will still see the delta
         return;
     }
+    
+    // Calculate adjacent width based on TOTAL AVAILABLE SPACE to prevent gaps
+    // Instead of (adjacent - delta), use (total - resized)
+    const newAdjacentWidth = workArea.width - resizedFrame.width;
     
     // Apply delta resize
     _isResizing = true;
@@ -774,11 +765,11 @@ function resizeTiledPair(resizedWindow, adjacentWindow, workArea, zone) {
         console.log(`[MOSAIC WM] Applied delta resize: resized=${resizedFrame.width}px, adjacent=${newAdjacentWidth}px, total=${resizedFrame.width + newAdjacentWidth}px`);
         
         // Update stored sizes
-        _previousSizes.set(resizedId, { width: resizedFrame.width, height: workArea.height });
-        _previousSizes.set(adjacentId, { width: newAdjacentWidth, height: workArea.height });
+        _previousSizes.set(resizedId, { width: resizedFrame.width, height: workArea.height, x: isResizedLeft ? workArea.x : workArea.x + newAdjacentWidth });
+        _previousSizes.set(adjacentId, { width: newAdjacentWidth, height: workArea.height, x: isResizedLeft ? workArea.x + resizedFrame.width : workArea.x });
     } finally {
         // Use timeout to reset flag after resize events have been processed
-        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2, () => {
             _isResizing = false;
             return GLib.SOURCE_REMOVE;
         });
@@ -832,8 +823,58 @@ export function fixTiledPairSizes(resizedWindow, zone) {
         return;
     }
     
+    
     const resizedFrame = resizedWindow.get_frame_rect();
     const adjacentFrame = adjacentWindow.get_frame_rect();
+    
+    // Use standard minimum width
+    const minWidth = 400;
+    
+    // Calculate what the adjacent width SHOULD be based on the resized window
+    const impliedAdjacentWidth = workArea.width - resizedFrame.width;
+    
+    console.log(`[MOSAIC WM] Post-resize check: resized=${resizedFrame.width}px, adjacent=${adjacentFrame.width}px, implied=${impliedAdjacentWidth}px, min=${minWidth}px`);
+    
+    // Check if the implied adjacent width is too small (meaning resized window is too big)
+    // OR if there is a gap/overlap (implied != actual)
+    if (impliedAdjacentWidth < minWidth) {
+        console.log(`[MOSAIC WM] Implied adjacent width (${impliedAdjacentWidth}px) is smaller than minimum (${minWidth}px) - adjusting`);
+        
+        // Clamp adjacent to its minimum, give the rest to resized window
+        const newAdjacentWidth = minWidth;
+        const newResizedWidth = workArea.width - newAdjacentWidth;
+        
+        _isResizing = true;
+        try {
+            const isResizedLeft = (zone === TileZone.LEFT_FULL);
+            
+            if (isResizedLeft) {
+                resizedWindow.move_frame(false, workArea.x, workArea.y);
+                resizedWindow.move_resize_frame(false, workArea.x, workArea.y, newResizedWidth, workArea.height);
+                
+                adjacentWindow.move_frame(false, workArea.x + newResizedWidth, workArea.y);
+                adjacentWindow.move_resize_frame(false, workArea.x + newResizedWidth, workArea.y, newAdjacentWidth, workArea.height);
+            } else {
+                adjacentWindow.move_frame(false, workArea.x, workArea.y);
+                adjacentWindow.move_resize_frame(false, workArea.x, workArea.y, newAdjacentWidth, workArea.height);
+                
+                resizedWindow.move_frame(false, workArea.x + newAdjacentWidth, workArea.y);
+                resizedWindow.move_resize_frame(false, workArea.x + newAdjacentWidth, workArea.y, newResizedWidth, workArea.height);
+            }
+            
+            console.log(`[MOSAIC WM] Adjusted sizes: resized=${newResizedWidth}px, adjacent=${newAdjacentWidth}px, total=${newResizedWidth + newAdjacentWidth}px`);
+            
+            // Update stored sizes
+            _previousSizes.set(resizedWindow.get_id(), { width: newResizedWidth, height: workArea.height, x: isResizedLeft ? workArea.x : workArea.x + newAdjacentWidth });
+            _previousSizes.set(adjacentWindow.get_id(), { width: newAdjacentWidth, height: workArea.height, x: isResizedLeft ? workArea.x + newResizedWidth : workArea.x });
+        } finally {
+            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+                _isResizing = false;
+                return GLib.SOURCE_REMOVE;
+            });
+        }
+        return;
+    }
     
     // Calculate actual total width
     const totalWidth = resizedFrame.width + adjacentFrame.width;
@@ -864,11 +905,11 @@ export function fixTiledPairSizes(resizedWindow, zone) {
                 resizedWindow.move_resize_frame(false, workArea.x + adjacentFrame.width, workArea.y, newResizedWidth, workArea.height);
             }
             
-            console.log(`[MOSAIC WM] Fixed sizes: resized=${newResizedWidth}px, adjacent=${adjacentFrame.width}px, total=${newResizedWidth + adjacentFrame.width}px`);
+            console.log(`[MOSAIC WM] Fixed gap: resized=${newResizedWidth}px, adjacent=${adjacentFrame.width}px, total=${newResizedWidth + adjacentFrame.width}px`);
             
             // Update stored sizes
-            _previousSizes.set(resizedWindow.get_id(), { width: newResizedWidth, height: workArea.height });
-            _previousSizes.set(adjacentWindow.get_id(), { width: adjacentFrame.width, height: workArea.height });
+            _previousSizes.set(resizedWindow.get_id(), { width: newResizedWidth, height: workArea.height, x: isResizedLeft ? workArea.x : workArea.x + adjacentFrame.width });
+            _previousSizes.set(adjacentWindow.get_id(), { width: adjacentFrame.width, height: workArea.height, x: isResizedLeft ? workArea.x + newResizedWidth : workArea.x });
         } finally {
             GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
                 _isResizing = false;
@@ -876,6 +917,6 @@ export function fixTiledPairSizes(resizedWindow, zone) {
             });
         }
     } else {
-        console.log(`[MOSAIC WM] No gap detected - sizes are correct`);
+        console.log(`[MOSAIC WM] No adjustment needed - sizes are correct`);
     }
 }

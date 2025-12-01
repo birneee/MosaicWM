@@ -188,11 +188,7 @@ function tile(windows, work_area) {
 
     let overflow = false; // Set to true if windows don't fit
     
-    // NOTE: Disabled area-based overflow check - it's too conservative
-    // The actual level-based tiling logic below correctly determines overflow
-    // if (totalRequiredArea > availableArea * SPACE_USAGE_THRESHOLD) {
-    //     overflow = true;
-    // }
+
 
     if(!vertical) { // Horizontal tiling mode
         // Calculate total width of all windows including spacing
@@ -583,33 +579,7 @@ export function tileWorkspaceWindows(workspace, reference_meta_window, _monitor,
     return overflow;
 }
 
-/**
- * Calculates minimum acceptable window size for overflow detection
- * 
- * Uses dynamic calculation based on:
- * - Available workspace area
- * - Number of windows that will be tiled
- * - Minimum acceptable dimensions per window
- * 
- * @param {Object} availableSpace - Available area {x, y, width, height}
- * @param {number} windowCount - Total number of windows (including new one)
- * @returns {Object} Minimum size {width, height}
- */
-function calculateMinimumWindowSize(availableSpace, windowCount) {
-    // Calculate area per window with breathing room (divide by windowCount * 3)
-    // The *3 factor ensures windows don't get too cramped
-    const areaPerWindow = (availableSpace.width * availableSpace.height) / (windowCount * 3);
-    
-    // Calculate balanced dimensions (square root gives balanced width/height)
-    const size = Math.sqrt(areaPerWindow);
-    
-    // Apply minimum thresholds to prevent tiny windows
-    // Width: minimum 350px, Height: minimum 250px (slightly narrower aspect ratio)
-    return {
-        width: Math.max(Math.floor(size), 350),
-        height: Math.max(Math.floor(size * 0.75), 250)
-    };
-}
+
 
 /**
  * Checks if a new window fits in the workspace
@@ -732,12 +702,4 @@ export function canFitWindow(window, workspace, monitor) {
     
     console.log('[MOSAIC WM] canFitWindow: Window fits!');
     return true;
-}
-
-/**
- * DEPRECATED: Use canFitWindow() ao invés desta função
- * Mantida para compatibilidade com código existente
- */
-export function windowFits(window, workspace, monitor) {
-    return canFitWindow(window, workspace, monitor);
 }

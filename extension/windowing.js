@@ -122,7 +122,7 @@ export function moveBackWindow(window) {
         console.error("There is no workspace to the left.");
         return;
     }
-    if(!tiling.windowFits(window, previous_workspace)) // Make sure there is space for the window in the previous workspace
+    if(!tiling.canFitWindow(window, previous_workspace)) // Make sure there is space for the window in the previous workspace
         return workspace;
     window.change_workspace(previous_workspace); // Move window to previous workspace
     if(active)
@@ -213,6 +213,9 @@ export function tryTileWithSnappedWindow(window, edgeTiledWindow, previousWorksp
         if (state) {
             state.zone = zone;
             console.log(`[MOSAIC WM] Dual-tiling: Updated window ${window.get_id()} state to zone ${zone}`);
+            
+            // Setup resize listener so interactive resize works
+            edgeTiling.setupResizeListener(window);
         }
         
         console.log(`[MOSAIC WM] Successfully dual-tiled window ${window.get_wm_class()} to ${direction} (${targetWidth}x${targetHeight})`);
