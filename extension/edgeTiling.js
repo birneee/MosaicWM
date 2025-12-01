@@ -670,6 +670,66 @@ function handleMosaicOverflow(tiledWindow, zone) {
 }
 
 /**
+ * Check if a single quarter tile should expand to half tile
+ * Called when a window is destroyed
+ * @param {Meta.Workspace} workspace
+ * @param {number} monitor
+ */
+export function checkQuarterExpansion(workspace, monitor) {
+    const edgeTiledWindows = getEdgeTiledWindows(workspace, monitor);
+    
+    if (edgeTiledWindows.length === 0) {
+        return;
+    }
+    
+    const workArea = workspace.get_work_area_for_monitor(monitor);
+    
+    // Check left side for single quarter
+    const leftQuarters = edgeTiledWindows.filter(w => 
+        w.zone === TileZone.TOP_LEFT || w.zone === TileZone.BOTTOM_LEFT
+    );
+    
+    if (leftQuarters.length === 1) {
+        // Expand to LEFT_FULL
+        const window = leftQuarters[0].window;
+        console.log(`[MOSAIC WM] Single quarter on left - expanding to LEFT_FULL`);
+        
+        // Update state and apply tile
+        const state = _windowStates.get(window.get_id());
+        if (state) {
+            state.zone = TileZone.LEFT_FULL;
+        }
+        
+        const rect = getZoneRect(TileZone.LEFT_FULL, workArea, window);
+        if (rect) {
+            window.move_resize_frame(false, rect.x, rect.y, rect.width, rect.height);
+        }
+    }
+    
+    // Check right side for single quarter
+    const rightQuarters = edgeTiledWindows.filter(w => 
+        w.zone === TileZone.TOP_RIGHT || w.zone === TileZone.BOTTOM_RIGHT
+    );
+    
+    if (rightQuarters.length === 1) {
+        // Expand to RIGHT_FULL
+        const window = rightQuarters[0].window;
+        console.log(`[MOSAIC WM] Single quarter on right - expanding to RIGHT_FULL`);
+        
+        // Update state and apply tile
+        const state = _windowStates.get(window.get_id());
+        if (state) {
+            state.zone = TileZone.RIGHT_FULL;
+        }
+        
+        const rect = getZoneRect(TileZone.RIGHT_FULL, workArea, window);
+        if (rect) {
+            window.move_resize_frame(false, rect.x, rect.y, rect.width, rect.height);
+        }
+    }
+}
+
+/**
  * Clear all window states (cleanup)
  */
 export function clearAllStates() {

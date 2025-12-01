@@ -241,6 +241,9 @@ export default class WindowMosaicExtension extends Extension {
         if(monitor === global.display.get_primary_monitor()) {
             const workspace = windowing.getWorkspace();
             
+            // Check for quarter tile expansion before re-tiling
+            edgeTiling.checkQuarterExpansion(workspace, monitor);
+            
             // Re-tile workspace after window is closed
             // Use null as reference to tile all remaining windows
             tiling.tileWorkspaceWindows(workspace, 
