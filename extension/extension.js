@@ -21,6 +21,8 @@ import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
+import Shell from 'gi://Shell';
+import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as windowing from './windowing.js';
 import * as tiling from './tiling.js';
 import * as drawing from './drawing.js';
@@ -704,7 +706,7 @@ export default class WindowMosaicExtension extends Extension {
             console.log(`[MOSAIC WM] Grab operation ended: ${grabpo}`);
             
             // Handle resize end for all resize grab operations (4097, 8193, 20481)
-            const isResizeEnd = (grabpo === 4097 || grabpo === 8193 || grabpo === 20481);
+            const isResizeEnd = (grabpo === 4097 || grabpo === 8193 || grabpo === 20481 || grabpo === 32769 || grabpo === 16385);
             
             if(isResizeEnd) {
                 // Check if this is an edge-tiled window
@@ -713,8 +715,12 @@ export default class WindowMosaicExtension extends Extension {
                 
                 if (isEdgeTiled && (tileState.zone === edgeTiling.TileZone.LEFT_FULL || tileState.zone === edgeTiling.TileZone.RIGHT_FULL)) {
                     // Fix final sizes after resize to respect actual minimum sizes
-                    console.log(`[MOSAIC WM] Resize ended (grabpo=${grabpo}) for edge-tiled window - fixing final sizes`);
+                    console.log(`[MOSAIC WM] Resize ended (grabpo=${grabpo}) for FULL edge-tiled window - fixing final sizes`);
                     edgeTiling.fixTiledPairSizes(window, tileState.zone);
+                } else if (isEdgeTiled && edgeTiling.isQuarterZone(tileState.zone)) {
+                    // Fix final sizes for quarter tiles
+                    console.log(`[MOSAIC WM] Resize ended (grabpo=${grabpo}) for QUARTER edge-tiled window - fixing final sizes`);
+                    edgeTiling.fixQuarterPairSizes(window, tileState.zone);
                 }
             }
             
@@ -937,9 +943,101 @@ export default class WindowMosaicExtension extends Extension {
             this._workspaceEventIds.push([workspace, eventIds]);
         }
 
+        // Setup keyboard shortcuts
+        this._setupKeybindings();
+
         // Sort all workspaces at startup
         setTimeout(this._tileAllWorkspaces, constants.STARTUP_TILE_DELAY_MS);
         this._tileTimeout = setInterval(this._tileAllWorkspaces, constants.TILE_INTERVAL_MS); // Tile all windows periodically
+    }
+    
+    /**
+     * Setup keyboard shortcuts for edge tiling
+     */
+    _setupKeybindings() {
+        // Get settings using Extension's built-in method
+        // This automatically uses the schema from metadata.json
+        const settings = this.getSettings('org.gnome.shell.extensions.mosaic-wm');
+        
+        // Tile to left half
+        Main.wm.addKeybinding(
+            'tile-left',
+            settings,
+            Meta.KeyBindingFlags.NONE,
+            Shell.ActionMode.NORMAL,
+            () => this._tileActiveWindow(edgeTiling.TileZone.LEFT_FULL)
+        );
+        
+        // Tile to right half
+        Main.wm.addKeybinding(
+            'tile-right',
+            settings,
+            Meta.KeyBindingFlags.NONE,
+            Shell.ActionMode.NORMAL,
+            () => this._tileActiveWindow(edgeTiling.TileZone.RIGHT_FULL)
+        );
+        
+        // Tile to top-left quarter
+        Main.wm.addKeybinding(
+            'tile-top-left',
+            settings,
+            Meta.KeyBindingFlags.NONE,
+            Shell.ActionMode.NORMAL,
+            () => this._tileActiveWindow(edgeTiling.TileZone.TOP_LEFT)
+        );
+        
+        // Tile to top-right quarter
+        Main.wm.addKeybinding(
+            'tile-top-right',
+            settings,
+            Meta.KeyBindingFlags.NONE,
+            Shell.ActionMode.NORMAL,
+            () => this._tileActiveWindow(edgeTiling.TileZone.TOP_RIGHT)
+        );
+        
+        // Tile to bottom-left quarter
+        Main.wm.addKeybinding(
+            'tile-bottom-left',
+            settings,
+            Meta.KeyBindingFlags.NONE,
+            Shell.ActionMode.NORMAL,
+            () => this._tileActiveWindow(edgeTiling.TileZone.BOTTOM_LEFT)
+        );
+        
+        // Tile to bottom-right quarter
+        Main.wm.addKeybinding(
+            'tile-bottom-right',
+            settings,
+            Meta.KeyBindingFlags.NONE,
+            Shell.ActionMode.NORMAL,
+            () => this._tileActiveWindow(edgeTiling.TileZone.BOTTOM_RIGHT)
+        );
+        
+        console.log('[MOSAIC WM] Keyboard shortcuts registered');
+    }
+    
+    /**
+     * Tile the active window to a specific zone
+     * @param {number} zone - TileZone enum value
+     */
+    _tileActiveWindow(zone) {
+        const window = global.display.focus_window;
+        if (!window) {
+            console.log('[MOSAIC WM] No active window to tile');
+            return;
+        }
+        
+        if (windowing.isExcluded(window)) {
+            console.log('[MOSAIC WM] Window is excluded from tiling');
+            return;
+        }
+        
+        const workspace = window.get_workspace();
+        const monitor = window.get_monitor();
+        const workArea = workspace.get_work_area_for_monitor(monitor);
+        
+        console.log(`[MOSAIC WM] Keyboard shortcut: tiling window ${window.get_id()} to zone ${zone}`);
+        edgeTiling.applyTile(window, zone, workArea);
     }
 
     disable() {
@@ -950,6 +1048,15 @@ export default class WindowMosaicExtension extends Extension {
             this._settingsOverrider.destroy();
             this._settingsOverrider = null;
         }
+        
+        // Remove keyboard shortcuts
+        Main.wm.removeKeybinding('tile-left');
+        Main.wm.removeKeybinding('tile-right');
+        Main.wm.removeKeybinding('tile-top-left');
+        Main.wm.removeKeybinding('tile-top-right');
+        Main.wm.removeKeybinding('tile-bottom-left');
+        Main.wm.removeKeybinding('tile-bottom-right');
+        console.log('[MOSAIC WM] Keyboard shortcuts removed');
         
         // Cleanup edge tiling polling timer if active
         if (this._edgeTilingPollId) {

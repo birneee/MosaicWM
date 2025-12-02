@@ -148,6 +148,82 @@ export function detectZone(cursorX, cursorY, workArea, workspace) {
 }
 
 /**
+ * Get width of existing tile on the same side (LEFT or RIGHT)
+ * @param {Meta.Workspace} workspace
+ * @param {number} monitor
+ * @param {string} side - 'LEFT' or 'RIGHT'
+ * @returns {number|null} Width of existing window or null
+ */
+function getExistingSideWidth(workspace, monitor, side) {
+    if (!workspace || monitor === undefined) return null;
+    
+    const workspaceWindows = workspace.list_windows().filter(w => 
+        w.get_monitor() === monitor &&
+        !w.is_hidden() &&
+        w.get_window_type() === Meta.WindowType.NORMAL
+    );
+    
+    // Find any window on the specified side
+    let existing = null;
+    for (const w of workspaceWindows) {
+        const state = getWindowState(w);
+        if (!state || !state.zone) continue;
+        
+        if (side === 'LEFT' && (
+            state.zone === TileZone.LEFT_FULL ||
+            state.zone === TileZone.TOP_LEFT ||
+            state.zone === TileZone.BOTTOM_LEFT
+        )) {
+            existing = w;
+            break;
+        } else if (side === 'RIGHT' && (
+            state.zone === TileZone.RIGHT_FULL ||
+            state.zone === TileZone.TOP_RIGHT ||
+            state.zone === TileZone.BOTTOM_RIGHT
+        )) {
+            existing = w;
+            break;
+        }
+    }
+    
+    if (existing) {
+        const frame = existing.get_frame_rect();
+        return frame.width;
+    }
+    
+    return null;
+}
+
+/**
+ * Get height of existing quarter tile window
+ * @param {Meta.Workspace} workspace
+ * @param {number} monitor
+ * @param {number} zone - TileZone to check
+ * @returns {number|null} Height of existing window or null
+ */
+function getExistingQuarterHeight(workspace, monitor, zone) {
+    if (!workspace || monitor === undefined) return null;
+    
+    const workspaceWindows = workspace.list_windows().filter(w => 
+        w.get_monitor() === monitor &&
+        !w.is_hidden() &&
+        w.get_window_type() === Meta.WindowType.NORMAL
+    );
+    
+    const existing = workspaceWindows.find(w => {
+        const state = getWindowState(w);
+        return state && state.zone === zone;
+    });
+    
+    if (existing) {
+        const frame = existing.get_frame_rect();
+        return frame.height;
+    }
+    
+    return null;
+}
+
+/**
  * Get rectangle for a tile zone
  * @param {number} zone - TileZone enum value
  * @param {Object} workArea - Work area rectangle
@@ -213,34 +289,75 @@ export function getZoneRect(zone, workArea, windowToTile = null) {
                 width: existingWidth ? (workArea.width - existingWidth) : (workArea.width - halfWidth),
                 height: workArea.height
             };
-        case TileZone.TOP_LEFT:
+            
+        case TileZone.TOP_LEFT: {
+            // Inherit width from existing LEFT side window
+            const workspace = windowToTile?.get_workspace();
+            const monitor = windowToTile?.get_monitor();
+            const leftWidth = getExistingSideWidth(workspace, monitor, 'LEFT') || halfWidth;
+            
+            // Check for existing BOTTOM_LEFT to calculate height
+            const bottomHeight = getExistingQuarterHeight(workspace, monitor, TileZone.BOTTOM_LEFT);
+            
             return { 
                 x: workArea.x, 
                 y: workArea.y, 
-                width: halfW, 
-                height: halfH 
+                width: leftWidth, 
+                height: bottomHeight ? (workArea.height - bottomHeight) : halfHeight 
             };
-        case TileZone.TOP_RIGHT:
+        }
+            
+        case TileZone.TOP_RIGHT: {
+            // Inherit width from existing RIGHT side window
+            const workspace = windowToTile?.get_workspace();
+            const monitor = windowToTile?.get_monitor();
+            const rightWidth = getExistingSideWidth(workspace, monitor, 'RIGHT') || halfWidth;
+            
+            // Check for existing BOTTOM_RIGHT to calculate height
+            const bottomHeight = getExistingQuarterHeight(workspace, monitor, TileZone.BOTTOM_RIGHT);
+            
             return { 
-                x: workArea.x + halfW, 
+                x: workArea.x + workArea.width - rightWidth, 
                 y: workArea.y, 
-                width: workArea.width - halfW, 
-                height: halfH 
+                width: rightWidth, 
+                height: bottomHeight ? (workArea.height - bottomHeight) : halfHeight 
             };
-        case TileZone.BOTTOM_LEFT:
+        }
+            
+        case TileZone.BOTTOM_LEFT: {
+            // Inherit width from existing LEFT side window
+            const workspace = windowToTile?.get_workspace();
+            const monitor = windowToTile?.get_monitor();
+            const leftWidth = getExistingSideWidth(workspace, monitor, 'LEFT') || halfWidth;
+            
+            // Check for existing TOP_LEFT to calculate position and height
+            const topHeight = getExistingQuarterHeight(workspace, monitor, TileZone.TOP_LEFT);
+            
             return { 
                 x: workArea.x, 
-                y: workArea.y + halfH, 
-                width: halfW, 
-                height: workArea.height - halfH 
+                y: topHeight ? (workArea.y + topHeight) : (workArea.y + halfHeight), 
+                width: leftWidth, 
+                height: topHeight ? (workArea.height - topHeight) : (workArea.height - halfHeight) 
             };
-        case TileZone.BOTTOM_RIGHT:
+        }
+            
+        case TileZone.BOTTOM_RIGHT: {
+            // Inherit width from existing RIGHT side window
+            const workspace = windowToTile?.get_workspace();
+            const monitor = windowToTile?.get_monitor();
+            const rightWidth = getExistingSideWidth(workspace, monitor, 'RIGHT') || halfWidth;
+            
+            // Check for existing TOP_RIGHT to calculate position and height
+            const topHeight = getExistingQuarterHeight(workspace, monitor, TileZone.TOP_RIGHT);
+            
             return { 
-                x: workArea.x + halfW, 
-                y: workArea.y + halfH, 
-                width: workArea.width - halfW, 
-                height: workArea.height - halfH 
+                x: workArea.x + workArea.width - rightWidth, 
+                y: topHeight ? (workArea.y + topHeight) : (workArea.y + halfHeight), 
+                width: rightWidth, 
+                height: topHeight ? (workArea.height - topHeight) : (workArea.height - halfHeight) 
             };
+        }
+            
         case TileZone.FULLSCREEN:
             return { 
                 x: workArea.x, 
@@ -386,7 +503,104 @@ export function calculateRemainingSpace(workspace, monitor) {
  * @param {Meta.Window} window
  */
 export function clearWindowState(window) {
-    _windowStates.delete(window.get_id());
+    const winId = window.get_id();
+    const state = _windowStates.get(winId);
+    
+    // If this was a quarter tile, expand the adjacent quarter to FULL
+    if (state && state.zone && isQuarterZone(state.zone)) {
+        console.log(`[MOSAIC WM] Quarter tile ${winId} being removed from zone ${state.zone}`);
+        
+        // Find the adjacent quarter tile (vertical pair)
+        const adjacentZone = getAdjacentQuarterZone(state.zone);
+        if (adjacentZone) {
+            // Find window in adjacent zone
+            const adjacentWindow = findWindowInZone(adjacentZone, window.get_workspace());
+            
+            if (adjacentWindow) {
+                console.log(`[MOSAIC WM] Found adjacent quarter ${adjacentWindow.get_id()} in zone ${adjacentZone}, expanding to FULL`);
+                
+                // Determine which FULL zone to expand to
+                const fullZone = getFullZoneFromQuarter(state.zone);
+                
+                // Expand adjacent window to FULL
+                const workspace = window.get_workspace();
+                const monitor = window.get_monitor();
+                const workArea = workspace.get_work_area_for_monitor(monitor);
+                const fullRect = getZoneRect(fullZone, workArea, adjacentWindow);
+                
+                if (fullRect) {
+                    adjacentWindow.move_resize_frame(false, fullRect.x, fullRect.y, fullRect.width, fullRect.height);
+                    
+                    // Update state
+                    const adjacentState = _windowStates.get(adjacentWindow.get_id());
+                    if (adjacentState) {
+                        adjacentState.zone = fullZone;
+                    }
+                    
+                    console.log(`[MOSAIC WM] Expanded quarter to ${fullZone}: ${fullRect.width}x${fullRect.height}`);
+                }
+            }
+        }
+    }
+    
+    _windowStates.delete(winId);
+}
+
+/**
+ * Check if a zone is a quarter zone
+ * @param {number} zone - TileZone value
+ * @returns {boolean}
+ */
+export function isQuarterZone(zone) {
+    return zone === TileZone.TOP_LEFT || zone === TileZone.BOTTOM_LEFT ||
+           zone === TileZone.TOP_RIGHT || zone === TileZone.BOTTOM_RIGHT;
+}
+
+/**
+ * Get the adjacent quarter zone (vertical pair)
+ * @param {number} zone
+ * @returns {number|null}
+ */
+function getAdjacentQuarterZone(zone) {
+    switch (zone) {
+        case TileZone.TOP_LEFT: return TileZone.BOTTOM_LEFT;
+        case TileZone.BOTTOM_LEFT: return TileZone.TOP_LEFT;
+        case TileZone.TOP_RIGHT: return TileZone.BOTTOM_RIGHT;
+        case TileZone.BOTTOM_RIGHT: return TileZone.TOP_RIGHT;
+        default: return null;
+    }
+}
+
+/**
+ * Get the FULL zone from a quarter zone
+ * @param {number} quarterZone
+ * @returns {number}
+ */
+function getFullZoneFromQuarter(quarterZone) {
+    if (quarterZone === TileZone.TOP_LEFT || quarterZone === TileZone.BOTTOM_LEFT) {
+        return TileZone.LEFT_FULL;
+    } else {
+        return TileZone.RIGHT_FULL;
+    }
+}
+
+/**
+ * Find window in a specific zone on a workspace
+ * @param {number} zone
+ * @param {Meta.Workspace} workspace
+ * @returns {Meta.Window|null}
+ */
+function findWindowInZone(zone, workspace) {
+    const windows = workspace.list_windows();
+    
+    for (const win of windows) {
+        const state = _windowStates.get(win.get_id());
+        if (state && state.zone === zone) {
+            return win;
+        }
+    }
+    
+    return null;
 }
 
 /**
@@ -458,6 +672,58 @@ export function applyTile(window, zone, workArea) {
         return false;
     }
     
+    // Check for FULL→QUARTER conversion
+    const workspace = window.get_workspace();
+    const monitor = window.get_monitor();
+    let fullToQuarterConversion = null;
+    
+    if (zone === TileZone.BOTTOM_LEFT || zone === TileZone.TOP_LEFT) {
+        // Check if LEFT_FULL exists
+        const workspaceWindows = workspace.list_windows().filter(w => 
+            w.get_monitor() === monitor &&
+            w.get_id() !== window.get_id() &&
+            !w.is_hidden() &&
+            w.get_window_type() === Meta.WindowType.NORMAL
+        );
+        
+        const leftFullWindow = workspaceWindows.find(w => {
+            const state = getWindowState(w);
+            return state && state.zone === TileZone.LEFT_FULL;
+        });
+        
+        if (leftFullWindow) {
+            const newZone = (zone === TileZone.BOTTOM_LEFT) ? TileZone.TOP_LEFT : TileZone.BOTTOM_LEFT;
+            fullToQuarterConversion = { window: leftFullWindow, newZone };
+        }
+    } else if (zone === TileZone.BOTTOM_RIGHT || zone === TileZone.TOP_RIGHT) {
+        // Check if RIGHT_FULL exists
+        const workspaceWindows = workspace.list_windows().filter(w => 
+            w.get_monitor() === monitor &&
+            w.get_id() !== window.get_id() &&
+            !w.is_hidden() &&
+            w.get_window_type() === Meta.WindowType.NORMAL
+        );
+        
+        const rightFullWindow = workspaceWindows.find(w => {
+            const state = getWindowState(w);
+            return state && state.zone === TileZone.RIGHT_FULL;
+        });
+        
+        if (rightFullWindow) {
+            const newZone = (zone === TileZone.BOTTOM_RIGHT) ? TileZone.TOP_RIGHT : TileZone.BOTTOM_RIGHT;
+            fullToQuarterConversion = { window: rightFullWindow, newZone };
+        }
+    }
+    
+    // If conversion needed, just log and proceed
+    let savedFullTileWidth = null;
+    if (fullToQuarterConversion) {
+        // Save the FULL tile width BEFORE applying the new quarter tile
+        const fullFrame = fullToQuarterConversion.window.get_frame_rect();
+        savedFullTileWidth = fullFrame.width;
+        console.log(`[MOSAIC WM] Converting FULL tile ${fullToQuarterConversion.window.get_id()} to quarter zone ${fullToQuarterConversion.newZone}, preserving width=${savedFullTileWidth}px`);
+    }
+    
     // Capture winId before callback
     const winId = window.get_id();
     
@@ -481,6 +747,80 @@ export function applyTile(window, zone, workArea) {
         }
         
         console.log(`[MOSAIC WM] Applied edge tile zone ${zone} to window ${winId}`);
+        
+        // Apply conversion if needed
+        if (fullToQuarterConversion && savedFullTileWidth) {
+            // Use the saved width for both quarters
+            const convertedRect = getZoneRect(fullToQuarterConversion.newZone, workArea, fullToQuarterConversion.window);
+            
+            // Override width with saved FULL tile width
+            convertedRect.width = savedFullTileWidth;
+            rect.width = savedFullTileWidth;
+            
+            // Recalculate x positions based on saved width
+            if (fullToQuarterConversion.newZone === TileZone.TOP_LEFT || fullToQuarterConversion.newZone === TileZone.BOTTOM_LEFT) {
+                convertedRect.x = workArea.x;
+                rect.x = workArea.x;
+            } else {
+                convertedRect.x = workArea.x + workArea.width - savedFullTileWidth;
+                rect.x = workArea.x + workArea.width - savedFullTileWidth;
+            }
+            
+            // Calculate halfHeight for initial sizing
+            const halfHeight = Math.floor(workArea.height / 2);
+            
+            // Apply conversion with halfHeight
+            fullToQuarterConversion.window.move_resize_frame(false, convertedRect.x, convertedRect.y, convertedRect.width, halfHeight);
+            
+            // Apply new quarter with halfHeight
+            window.move_resize_frame(false, rect.x, rect.y, rect.width, halfHeight);
+            
+            console.log(`[MOSAIC WM] Applied quarter tiles with halfHeight=${halfHeight}px, width=${savedFullTileWidth}px`);
+            
+            // Update converted window state IMMEDIATELY (before timeout)
+            // This ensures getEdgeTiledWindows counts both quarters correctly
+            const convertedState = _windowStates.get(fullToQuarterConversion.window.get_id());
+            if (convertedState) {
+                convertedState.zone = fullToQuarterConversion.newZone;
+            }
+            
+            // Schedule adjustment after compositor processes the resize
+            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
+                // Check actual heights after compositor processed
+                const actualConvertedFrame = fullToQuarterConversion.window.get_frame_rect();
+                const actualNewFrame = window.get_frame_rect();
+                
+                console.log(`[MOSAIC WM] Post-resize check: converted=${actualConvertedFrame.height}px, new=${actualNewFrame.height}px, target=${halfHeight}px`);
+                
+                // If either didn't reach halfHeight, adjust the other to fill space
+                if (actualConvertedFrame.height > halfHeight || actualNewFrame.height > halfHeight) {
+                    if (zone === TileZone.BOTTOM_LEFT || zone === TileZone.BOTTOM_RIGHT) {
+                        // New window is BOTTOM, adjust it to fill remaining space
+                        const remainingHeight = workArea.height - actualConvertedFrame.height;
+                        const newY = workArea.y + actualConvertedFrame.height;
+                        window.move_resize_frame(false, rect.x, newY, rect.width, remainingHeight);
+                        console.log(`[MOSAIC WM] Adjusted BOTTOM to ${remainingHeight}px at y=${newY}`);
+                    } else {
+                        // New window is TOP, adjust BOTTOM to fill remaining space
+                        const remainingHeight = workArea.height - actualNewFrame.height;
+                        const newY = workArea.y + actualNewFrame.height;
+                        fullToQuarterConversion.window.move_resize_frame(false, convertedRect.x, newY, convertedRect.width, remainingHeight);
+                        console.log(`[MOSAIC WM] Adjusted BOTTOM to ${remainingHeight}px at y=${newY}`);
+                    }
+                }
+                
+                // Re-tile mosaic after quarter conversion completes
+                // This ensures mosaic windows reorganize into the remaining space
+                import('./tiling.js').then(tiling => {
+                    tiling.tileWorkspaceWindows(workspace, null, monitor, false);
+                    console.log(`[MOSAIC WM] Re-tiled mosaic after quarter conversion`);
+                });
+                
+                return GLib.SOURCE_REMOVE;
+            });
+            
+            console.log(`[MOSAIC WM] Converted to ${convertedRect.width}x${convertedRect.height}, new quarter: ${rect.width}x${rect.height}`);
+        }
         
         // Check for mosaic overflow after tiling
         handleMosaicOverflow(window, zone);
@@ -521,6 +861,43 @@ export function removeTile(window, callback = null) {
     const savedY = savedState.y;
     
     console.log(`[MOSAIC WM] removeTile: Saved dimensions: ${savedWidth}x${savedHeight} at (${savedX}, ${savedY})`);
+    
+    // If this was a quarter tile, expand the adjacent quarter to FULL
+    if (isQuarterZone(savedState.zone)) {
+        console.log(`[MOSAIC WM] Quarter tile ${winId} being removed from zone ${savedState.zone}`);
+        
+        // Find the adjacent quarter tile (vertical pair)
+        const adjacentZone = getAdjacentQuarterZone(savedState.zone);
+        if (adjacentZone) {
+            // Find window in adjacent zone
+            const adjacentWindow = findWindowInZone(adjacentZone, window.get_workspace());
+            
+            if (adjacentWindow) {
+                console.log(`[MOSAIC WM] Found adjacent quarter ${adjacentWindow.get_id()} in zone ${adjacentZone}, expanding to FULL`);
+                
+                // Determine which FULL zone to expand to
+                const fullZone = getFullZoneFromQuarter(savedState.zone);
+                
+                // Expand adjacent window to FULL
+                const workspace = window.get_workspace();
+                const monitor = window.get_monitor();
+                const workArea = workspace.get_work_area_for_monitor(monitor);
+                const fullRect = getZoneRect(fullZone, workArea, adjacentWindow);
+                
+                if (fullRect) {
+                    adjacentWindow.move_resize_frame(false, fullRect.x, fullRect.y, fullRect.width, fullRect.height);
+                    
+                    // Update state
+                    const adjacentState = _windowStates.get(adjacentWindow.get_id());
+                    if (adjacentState) {
+                        adjacentState.zone = fullZone;
+                    }
+                    
+                    console.log(`[MOSAIC WM] Expanded quarter to ${fullZone}: ${fullRect.width}x${fullRect.height}`);
+                }
+            }
+        }
+    }
     
     savedState.zone = TileZone.NONE;
     
@@ -795,8 +1172,9 @@ function handleWindowResize(window) {
     // Handle resize based on zone
     if (state.zone === TileZone.LEFT_FULL || state.zone === TileZone.RIGHT_FULL) {
         handleHorizontalResize(window, state.zone);
+    } else if (isQuarterZone(state.zone)) {
+        handleVerticalResize(window, state.zone);
     }
-    // TODO: Handle quarter tiles in Phase 2
 }
 
 /**
@@ -825,6 +1203,118 @@ function handleHorizontalResize(window, zone) {
     // Resize both windows proportionally
     console.log(`[MOSAIC WM] Resizing tiled pair`);
     resizeTiledPair(window, adjacentWindow, workArea, zone);
+}
+
+/**
+ * Handle vertical resize between quarter tiles (TOP ↔ BOTTOM)
+ * @param {Meta.Window} window - Window being resized
+ * @param {number} zone - TileZone of the window
+ */
+function handleVerticalResize(window, zone) {
+    const workspace = window.get_workspace();
+    const monitor = window.get_monitor();
+    const workArea = workspace.get_work_area_for_monitor(monitor);
+    
+    // Find adjacent quarter window (vertical pair)
+    const adjacentZone = getAdjacentQuarterZone(zone);
+    if (!adjacentZone) {
+        return;
+    }
+    
+    const adjacentWindow = findWindowInZone(adjacentZone, workspace);
+    
+    if (!adjacentWindow) {
+        console.log(`[MOSAIC WM] No adjacent quarter - resize affects mosaic`);
+        return;
+    }
+    
+    const resizedId = window.get_id();
+    const adjacentId = adjacentWindow.get_id();
+    const resizedFrame = window.get_frame_rect();
+    const adjacentFrame = adjacentWindow.get_frame_rect();
+    
+    // Get previous size
+    const previousState = _previousSizes.get(resizedId);
+    
+    if (!previousState) {
+        // First resize - just store current size and position
+        _previousSizes.set(resizedId, { width: resizedFrame.width, height: resizedFrame.height, y: resizedFrame.y });
+        _previousSizes.set(adjacentId, { width: adjacentFrame.width, height: adjacentFrame.height, y: adjacentFrame.y });
+        console.log(`[MOSAIC WM] Stored initial quarter states: resized=${resizedFrame.height}px@y${resizedFrame.y}, adjacent=${adjacentFrame.height}px@y${adjacentFrame.y}`);
+        return;
+    }
+    
+    // Calculate delta (how much the window changed)
+    const deltaHeight = resizedFrame.height - previousState.height;
+    
+    console.log(`[MOSAIC WM] Vertical resize delta: ${deltaHeight}px (was ${previousState.height}px, now ${resizedFrame.height}px)`);
+    
+    // Calculate adjacent height based on TOTAL AVAILABLE SPACE to prevent gaps
+    // Instead of (adjacent - delta), use (total - resized)
+    const newAdjacentHeight = workArea.height - resizedFrame.height;
+    
+    // Check BOTH minimum constraints
+    const minHeight = 100; // Minimum usable height for quarter tile
+    const maxResizedHeight = workArea.height - minHeight;
+    
+    // Validate resized window doesn't exceed maximum
+    if (resizedFrame.height > maxResizedHeight) {
+        console.log(`[MOSAIC WM] Maximum height reached (${resizedFrame.height}px > ${maxResizedHeight}px) - stopping resize`);
+        // Don't update _previousSizes so next event will still see the delta
+        return;
+    }
+    
+    // Validate adjacent window doesn't go below minimum
+    if (newAdjacentHeight < minHeight) {
+        console.log(`[MOSAIC WM] Adjacent minimum height reached (${newAdjacentHeight}px < ${minHeight}px) - stopping resize`);
+        // Don't update _previousSizes so next event will still see the delta
+        return;
+    }
+    
+    // Determine positions based on which is TOP and which is BOTTOM
+    const isResizedTop = (zone === TileZone.TOP_LEFT || zone === TileZone.TOP_RIGHT);
+    
+    // Apply delta resize
+    _isResizing = true;
+    
+    try {
+        if (isResizedTop) {
+            // Resized is TOP, adjacent is BOTTOM
+            // IMPORTANT: Call move_frame() before move_resize_frame() (gTile solution)
+            window.move_frame(false, resizedFrame.x, workArea.y);
+            window.move_resize_frame(false, resizedFrame.x, workArea.y, resizedFrame.width, resizedFrame.height);
+            
+            const adjacentY = workArea.y + resizedFrame.height;
+            adjacentWindow.move_frame(false, resizedFrame.x, adjacentY);
+            adjacentWindow.move_resize_frame(false, resizedFrame.x, adjacentY, resizedFrame.width, newAdjacentHeight);
+        } else {
+            // Resized is BOTTOM, adjacent is TOP
+            // IMPORTANT: Call move_frame() before move_resize_frame() (gTile solution)
+            adjacentWindow.move_frame(false, resizedFrame.x, workArea.y);
+            adjacentWindow.move_resize_frame(false, resizedFrame.x, workArea.y, resizedFrame.width, newAdjacentHeight);
+            
+            const resizedY = workArea.y + newAdjacentHeight;
+            window.move_frame(false, resizedFrame.x, resizedY);
+            window.move_resize_frame(false, resizedFrame.x, resizedY, resizedFrame.width, resizedFrame.height);
+        }
+        
+        console.log(`[MOSAIC WM] Applied vertical delta resize: resized=${resizedFrame.height}px, adjacent=${newAdjacentHeight}px, total=${resizedFrame.height + newAdjacentHeight}px`);
+        
+        // Update stored sizes
+        if (isResizedTop) {
+            _previousSizes.set(resizedId, { width: resizedFrame.width, height: resizedFrame.height, y: workArea.y });
+            _previousSizes.set(adjacentId, { width: resizedFrame.width, height: newAdjacentHeight, y: workArea.y + resizedFrame.height });
+        } else {
+            _previousSizes.set(adjacentId, { width: resizedFrame.width, height: newAdjacentHeight, y: workArea.y });
+            _previousSizes.set(resizedId, { width: resizedFrame.width, height: resizedFrame.height, y: workArea.y + newAdjacentHeight });
+        }
+    } finally {
+        // Use timeout to reset flag after resize events have been processed
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2, () => {
+            _isResizing = false;
+            return GLib.SOURCE_REMOVE;
+        });
+    }
 }
 
 /**
@@ -1091,4 +1581,150 @@ export function fixTiledPairSizes(resizedWindow, zone) {
     } else {
         console.log(`[MOSAIC WM] No adjustment needed - sizes are correct`);
     }
+}
+
+/**
+ * Fix quarter tile pair sizes after vertical resize ends
+ * Adjusts windows to fill workspace height, respecting actual minimum sizes
+ * @param {Meta.Window} resizedWindow - Window that was resized
+ * @param {number} zone - Zone of resized window
+ */
+export function fixQuarterPairSizes(resizedWindow, zone) {
+    const workspace = resizedWindow.get_workspace();
+    const monitor = resizedWindow.get_monitor();
+    const workArea = workspace.get_work_area_for_monitor(monitor);
+    
+    // Find adjacent quarter window (vertical pair)
+    const adjacentZone = getAdjacentQuarterZone(zone);
+    if (!adjacentZone) {
+        return;
+    }
+    
+    const adjacentWindow = findWindowInZone(adjacentZone, workspace);
+    
+    if (!adjacentWindow) {
+        console.log(`[MOSAIC WM] No adjacent quarter found for size fix`);
+        return;
+    }
+    
+    const resizedFrame = resizedWindow.get_frame_rect();
+    const adjacentFrame = adjacentWindow.get_frame_rect();
+    
+    // The adjacent window's CURRENT height is the minimum it can be
+    // because the compositor already enforced its minHeight during resize
+    // Use 200px as absolute minimum protection
+    const absoluteMinHeight = 200;
+    const minHeight = Math.max(adjacentFrame.height, absoluteMinHeight);
+    
+    // Calculate what the adjacent height SHOULD be based on the resized window
+    const impliedAdjacentHeight = workArea.height - resizedFrame.height;
+    
+    console.log(`[MOSAIC WM] Post-resize check (quarters): resized=${resizedFrame.height}px, adjacent=${adjacentFrame.height}px, implied=${impliedAdjacentHeight}px, min=${minHeight}px`);
+    
+    // IMPORTANT: Check the IMPLIED height (what it should be), not the current frame height
+    // The current frame height might be stale from before the last resize event
+    
+    // Check if the implied adjacent height is too small (meaning resized window is too big)
+    // OR if there is a gap/overlap (implied != actual)
+    if (impliedAdjacentHeight < minHeight) {
+        console.log(`[MOSAIC WM] Implied adjacent height (${impliedAdjacentHeight}px) is smaller than minimum (${minHeight}px) - adjusting`);
+        
+        // Clamp adjacent to its minimum, give the rest to resized window
+        const newAdjacentHeight = minHeight;
+        const newResizedHeight = workArea.height - newAdjacentHeight;
+        
+        _isResizing = true;
+        try {
+            const isResizedTop = (zone === TileZone.TOP_LEFT || zone === TileZone.TOP_RIGHT);
+            
+            if (isResizedTop) {
+                // Resized is TOP, adjacent is BOTTOM
+                resizedWindow.move_frame(false, resizedFrame.x, workArea.y);
+                resizedWindow.move_resize_frame(false, resizedFrame.x, workArea.y, resizedFrame.width, newResizedHeight);
+                
+                const adjacentY = workArea.y + newResizedHeight;
+                adjacentWindow.move_frame(false, resizedFrame.x, adjacentY);
+                adjacentWindow.move_resize_frame(false, resizedFrame.x, adjacentY, resizedFrame.width, newAdjacentHeight);
+            } else {
+                // Resized is BOTTOM, adjacent is TOP
+                adjacentWindow.move_frame(false, resizedFrame.x, workArea.y);
+                adjacentWindow.move_resize_frame(false, resizedFrame.x, workArea.y, resizedFrame.width, newAdjacentHeight);
+                
+                const resizedY = workArea.y + newAdjacentHeight;
+                resizedWindow.move_frame(false, resizedFrame.x, resizedY);
+                resizedWindow.move_resize_frame(false, resizedFrame.x, resizedY, resizedFrame.width, newResizedHeight);
+            }
+            
+            console.log(`[MOSAIC WM] Adjusted quarter sizes: resized=${newResizedHeight}px, adjacent=${newAdjacentHeight}px, total=${newResizedHeight + newAdjacentHeight}px`);
+            
+            // Update stored sizes
+            if (isResizedTop) {
+                _previousSizes.set(resizedWindow.get_id(), { width: resizedFrame.width, height: newResizedHeight, y: workArea.y });
+                _previousSizes.set(adjacentWindow.get_id(), { width: resizedFrame.width, height: newAdjacentHeight, y: workArea.y + newResizedHeight });
+            } else {
+                _previousSizes.set(adjacentWindow.get_id(), { width: resizedFrame.width, height: newAdjacentHeight, y: workArea.y });
+                _previousSizes.set(resizedWindow.get_id(), { width: resizedFrame.width, height: newResizedHeight, y: workArea.y + newAdjacentHeight });
+            }
+        } finally {
+            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+                _isResizing = false;
+                return GLib.SOURCE_REMOVE;
+            });
+        }
+        return;
+    }
+    
+    // Calculate actual total height
+    const totalHeight = resizedFrame.height + adjacentFrame.height;
+    
+    // Check if there's a gap (total < workArea.height)
+    if (totalHeight < workArea.height) {
+        const gap = workArea.height - totalHeight;
+        console.log(`[MOSAIC WM] Detected vertical gap of ${gap}px - adjusting resized window`);
+        
+        // Give the gap to the resized window (the one that grew)
+        const newResizedHeight = resizedFrame.height + gap;
+        
+        _isResizing = true;
+        try {
+            const isResizedTop = (zone === TileZone.TOP_LEFT || zone === TileZone.TOP_RIGHT);
+            
+            if (isResizedTop) {
+                // Resized is TOP
+                resizedWindow.move_frame(false, resizedFrame.x, workArea.y);
+                resizedWindow.move_resize_frame(false, resizedFrame.x, workArea.y, resizedFrame.width, newResizedHeight);
+                
+                const adjacentY = workArea.y + newResizedHeight;
+                adjacentWindow.move_frame(false, resizedFrame.x, adjacentY);
+                adjacentWindow.move_resize_frame(false, resizedFrame.x, adjacentY, resizedFrame.width, adjacentFrame.height);
+            } else {
+                // Resized is BOTTOM
+                adjacentWindow.move_frame(false, resizedFrame.x, workArea.y);
+                adjacentWindow.move_resize_frame(false, resizedFrame.x, workArea.y, resizedFrame.width, adjacentFrame.height);
+                
+                const resizedY = workArea.y + adjacentFrame.height;
+                resizedWindow.move_frame(false, resizedFrame.x, resizedY);
+                resizedWindow.move_resize_frame(false, resizedFrame.x, resizedY, resizedFrame.width, newResizedHeight);
+            }
+            
+            console.log(`[MOSAIC WM] Closed vertical gap: resized=${newResizedHeight}px, adjacent=${adjacentFrame.height}px, total=${newResizedHeight + adjacentFrame.height}px`);
+            
+            // Update stored sizes
+            if (isResizedTop) {
+                _previousSizes.set(resizedWindow.get_id(), { width: resizedFrame.width, height: newResizedHeight, y: workArea.y });
+                _previousSizes.set(adjacentWindow.get_id(), { width: resizedFrame.width, height: adjacentFrame.height, y: workArea.y + newResizedHeight });
+            } else {
+                _previousSizes.set(adjacentWindow.get_id(), { width: resizedFrame.width, height: adjacentFrame.height, y: workArea.y });
+                _previousSizes.set(resizedWindow.get_id(), { width: resizedFrame.width, height: newResizedHeight, y: workArea.y + adjacentFrame.height });
+            }
+        } finally {
+            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+                _isResizing = false;
+                return GLib.SOURCE_REMOVE;
+            });
+        }
+        return;
+    }
+    
+    console.log(`[MOSAIC WM] Quarter pair sizes OK - no adjustment needed`);
 }
