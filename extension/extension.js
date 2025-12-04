@@ -28,6 +28,7 @@ import * as tiling from './tiling.js';
 import * as drawing from './drawing.js';
 import * as reordering from './reordering.js';
 import * as edgeTiling from './edgeTiling.js';
+import * as swapping from './swapping.js';
 import * as constants from './constants.js';
 import { SettingsOverrider } from './settingsOverrider.js';
 
@@ -1013,6 +1014,42 @@ export default class WindowMosaicExtension extends Extension {
             () => this._tileActiveWindow(edgeTiling.TileZone.BOTTOM_RIGHT)
         );
         
+        // Swap left
+        Main.wm.addKeybinding(
+            'swap-left',
+            settings,
+            Meta.KeyBindingFlags.NONE,
+            Shell.ActionMode.NORMAL,
+            () => this._swapActiveWindow('left')
+        );
+        
+        // Swap right
+        Main.wm.addKeybinding(
+            'swap-right',
+            settings,
+            Meta.KeyBindingFlags.NONE,
+            Shell.ActionMode.NORMAL,
+            () => this._swapActiveWindow('right')
+        );
+        
+        // Swap up
+        Main.wm.addKeybinding(
+            'swap-up',
+            settings,
+            Meta.KeyBindingFlags.NONE,
+            Shell.ActionMode.NORMAL,
+            () => this._swapActiveWindow('up')
+        );
+        
+        // Swap down
+        Main.wm.addKeybinding(
+            'swap-down',
+            settings,
+            Meta.KeyBindingFlags.NONE,
+            Shell.ActionMode.NORMAL,
+            () => this._swapActiveWindow('down')
+        );
+        
         console.log('[MOSAIC WM] Keyboard shortcuts registered');
     }
     
@@ -1039,6 +1076,22 @@ export default class WindowMosaicExtension extends Extension {
         console.log(`[MOSAIC WM] Keyboard shortcut: tiling window ${window.get_id()} to zone ${zone}`);
         edgeTiling.applyTile(window, zone, workArea);
     }
+    
+    /**
+     * Swap the active window with its neighbor in the given direction
+     * @private
+     */
+    _swapActiveWindow(direction) {
+        const focusedWindow = global.display.get_focus_window();
+        
+        if (!focusedWindow || windowing.isExcluded(focusedWindow)) {
+            console.log('[MOSAIC WM] No valid focused window for swap');
+            return;
+        }
+        
+        console.log(`[MOSAIC WM] Swapping focused window ${focusedWindow.get_id()} in direction: ${direction}`);
+        swapping.swapWindow(focusedWindow, direction);
+    }
 
     disable() {
         console.log("[MOSAIC WM]: Disabling Mosaic layout manager.");
@@ -1056,6 +1109,10 @@ export default class WindowMosaicExtension extends Extension {
         Main.wm.removeKeybinding('tile-top-right');
         Main.wm.removeKeybinding('tile-bottom-left');
         Main.wm.removeKeybinding('tile-bottom-right');
+        Main.wm.removeKeybinding('swap-left');
+        Main.wm.removeKeybinding('swap-right');
+        Main.wm.removeKeybinding('swap-up');
+        Main.wm.removeKeybinding('swap-down');
         console.log('[MOSAIC WM] Keyboard shortcuts removed');
         
         // Cleanup edge tiling polling timer if active
