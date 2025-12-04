@@ -218,6 +218,10 @@ export function tryTileWithSnappedWindow(window, edgeTiledWindow, previousWorksp
             edgeTiling.setupResizeListener(window);
         }
         
+        // Register this as an auto-tile dependency
+        // The new window depends on the existing edge-tiled window
+        edgeTiling.registerAutoTileDependency(window.get_id(), edgeTiledWindow.get_id());
+        
         console.log(`[MOSAIC WM] Successfully dual-tiled window ${window.get_wm_class()} to ${direction} (${targetWidth}x${targetHeight})`);
         return true;
     } catch (error) {
