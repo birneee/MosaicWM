@@ -31,5 +31,25 @@
       <summary>Tile window to bottom-right quarter</summary>
       <description>Tile the active window to the bottom-right quarter of the screen</description>
     </key>
+    <key name="swap-left" type="as">
+      <default>['&lt;Super&gt;&lt;Alt&gt;Left']</default>
+      <summary>Swap window to the left</summary>
+      <description>Swap the active window with its left neighbor (mosaic or tiling)</description>
+    </key>
+    <key name="swap-right" type="as">
+      <default>['&lt;Super&gt;&lt;Alt&gt;Right']</default>
+      <summary>Swap window to the right</summary>
+      <description>Swap the active window with its right neighbor (mosaic or tiling)</description>
+    </key>
+    <key name="swap-up" type="as">
+      <default>['&lt;Super&gt;&lt;Alt&gt;Up']</default>
+      <summary>Swap window upward</summary>
+      <description>Swap the active window with its upper neighbor (quarter tiles only)</description>
+    </key>
+    <key name="swap-down" type="as">
+      <default>['&lt;Super&gt;&lt;Alt&gt;Down']</default>
+      <summary>Swap window downward</summary>
+      <description>Swap the active window with its lower neighbor (quarter tiles only)</description>
+    </key>
   </schema>
 </schemalist>
