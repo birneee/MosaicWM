@@ -523,6 +523,46 @@ export function calculateRemainingSpace(workspace, monitor) {
 }
 
 /**
+ * Calculate remaining workspace space for a specific zone (for preview)
+ * Used during drag to show where mosaic windows will go
+ * @param {number} zone - TileZone enum value (hypothetical zone being previewed)
+ * @param {Object} workArea - Work area rectangle
+ * @returns {Object} Remaining space rectangle {x, y, width, height}
+ */
+export function calculateRemainingSpaceForZone(zone, workArea) {
+    const halfWidth = Math.floor(workArea.width / 2);
+    
+    switch (zone) {
+        case TileZone.LEFT_FULL:
+        case TileZone.TOP_LEFT:
+        case TileZone.BOTTOM_LEFT:
+            // Zone is on left, remaining space is right half
+            return {
+                x: workArea.x + halfWidth,
+                y: workArea.y,
+                width: workArea.width - halfWidth,
+                height: workArea.height
+            };
+            
+        case TileZone.RIGHT_FULL:
+        case TileZone.TOP_RIGHT:
+        case TileZone.BOTTOM_RIGHT:
+            // Zone is on right, remaining space is left half
+            return {
+                x: workArea.x,
+                y: workArea.y,
+                width: halfWidth,
+                height: workArea.height
+            };
+            
+        default:
+            // No zone or FULLSCREEN, return full workspace
+            return workArea;
+    }
+}
+
+
+/**
  * Clear saved window state
  * @param {Meta.Window} window
  */
@@ -789,6 +829,11 @@ export function applyTile(window, zone, workArea, skipOverflowCheck = false) {
     
     // Apply tile using idle callback for reliability
     GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+        // IMPORTANT: For quarter zones, call move_frame() before move_resize_frame() (gTile solution)
+        // This ensures window arrives at correct size without visual jump
+        if (isQuarterZone(zone)) {
+            window.move_frame(false, rect.x, rect.y);
+        }
         window.move_resize_frame(false, rect.x, rect.y, rect.width, rect.height);
         
         // Note: Square corners feature deferred - requires GLSL shaders
@@ -826,10 +871,11 @@ export function applyTile(window, zone, workArea, skipOverflowCheck = false) {
             // Calculate halfHeight for initial sizing
             const halfHeight = Math.floor(workArea.height / 2);
             
-            // Apply conversion with halfHeight
+            // IMPORTANT: Call move_frame() before move_resize_frame() for smooth transition (gTile solution)
+            fullToQuarterConversion.window.move_frame(false, convertedRect.x, convertedRect.y);
             fullToQuarterConversion.window.move_resize_frame(false, convertedRect.x, convertedRect.y, convertedRect.width, halfHeight);
             
-            // Apply new quarter with halfHeight
+            window.move_frame(false, rect.x, rect.y);
             window.move_resize_frame(false, rect.x, rect.y, rect.width, halfHeight);
             
             console.log(`[MOSAIC WM] Applied quarter tiles with halfHeight=${halfHeight}px, width=${savedFullTileWidth}px`);
