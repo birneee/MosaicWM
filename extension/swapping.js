@@ -556,6 +556,39 @@ export function swapWindow(window, direction) {
 }
 
 /**
+ * Swap windows via drag-and-drop
+ * Called when dragging a window to an occupied tiling zone
+ * @param {Meta.Window} draggedWindow - Window being dragged
+ * @param {Meta.Window} targetWindow - Window in target zone
+ * @param {number} targetZone - Zone being dragged to
+ * @param {Meta.Workspace} workspace
+ * @param {number} monitor
+ * @returns {boolean} Success
+ */
+export function swapWindows(draggedWindow, targetWindow, targetZone, workspace, monitor) {
+    console.log(`[MOSAIC WM] DnD Swap: ${draggedWindow.get_id()} → zone ${targetZone} (occupied by ${targetWindow.get_id()})`);
+    
+    // Check if dragging to same window (no-op)
+    if (draggedWindow.get_id() === targetWindow.get_id()) {
+        console.log('[MOSAIC WM] DnD Swap: dragging to same window, ignoring');
+        return false;
+    }
+    
+    const draggedState = edgeTiling.getWindowState(draggedWindow);
+    const isDraggedTiled = draggedState && draggedState.zone !== edgeTiling.TileZone.NONE;
+    
+    if (isDraggedTiled) {
+        // Tiling ↔ Tiling swap
+        console.log(`[MOSAIC WM] DnD Swap: Tiling ↔ Tiling (${draggedState.zone} ↔ ${targetZone})`);
+        return swapTiledWindows(draggedWindow, draggedState.zone, targetWindow, targetZone, workspace, monitor);
+    } else {
+        // Mosaic → Tiling swap
+        console.log(`[MOSAIC WM] DnD Swap: Mosaic → Tiling (zone ${targetZone})`);
+        return swapMosaicWithTiled(draggedWindow, targetWindow, targetZone, workspace, monitor);
+    }
+}
+
+/**
  * Swap two mosaic windows
  * @private
  */

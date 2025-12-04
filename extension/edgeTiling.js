@@ -450,6 +450,26 @@ export function getNonEdgeTiledWindows(workspace, monitor) {
 }
 
 /**
+ * Get the window currently occupying a specific zone
+ * Used for DnD swap detection
+ * @param {number} zone - TileZone enum value
+ * @param {Meta.Workspace} workspace
+ * @param {number} monitor
+ * @returns {Meta.Window|null} Window in zone, or null if empty
+ */
+export function getWindowInZone(zone, workspace, monitor) {
+    const edgeTiledWindows = getEdgeTiledWindows(workspace, monitor);
+    
+    for (const {window, zone: windowZone} of edgeTiledWindows) {
+        if (windowZone === zone) {
+            return window;
+        }
+    }
+    
+    return null;
+}
+
+/**
  * Calculate remaining workspace space after edge-tiled windows
  * Replaces snap.calculateRemainingSpace()
  * @param {Meta.Workspace} workspace

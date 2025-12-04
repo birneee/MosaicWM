@@ -667,23 +667,50 @@ export default class WindowMosaicExtension extends Extension {
                 const monitor = window.get_monitor();
                 const workArea = workspace.get_work_area_for_monitor(monitor);
                 
-                // Set skip flag BEFORE applying tile to prevent signal handlers (like size-change)
-                // from triggering a mosaic retile during the operation
-                this._skipNextTiling = window.get_id();
+                // Check if zone is occupied - if so, swap instead of tile
+                const occupiedWindow = edgeTiling.getWindowInZone(this._currentZone, workspace, monitor);
                 
-                const success = edgeTiling.applyTile(window, this._currentZone, workArea);
-                console.log(`[MOSAIC WM] Edge tiling: apply result = ${success}`);
-                
-                // Prevent mosaic from re-tiling this window immediately after edge tiling
-                if (success) {
-                    // Short timeout to prevent immediate re-tiling
-                    GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+                if (occupiedWindow && occupiedWindow.get_id() !== window.get_id()) {
+                    // Zone occupied - perform swap
+                    console.log(`[MOSAIC WM] DnD: zone ${this._currentZone} occupied by ${occupiedWindow.get_id()}, swapping`);
+                    
+                    // Set skip flag to prevent mosaic retiling during swap
+                    this._skipNextTiling = window.get_id();
+                    
+                    const success = swapping.swapWindows(window, occupiedWindow, this._currentZone, workspace, monitor);
+                    console.log(`[MOSAIC WM] DnD swap result = ${success}`);
+                    
+                    if (success) {
+                        // Short timeout to prevent immediate re-tiling
+                        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+                            this._skipNextTiling = null;
+                            return GLib.SOURCE_REMOVE;
+                        });
+                    } else {
                         this._skipNextTiling = null;
-                        return GLib.SOURCE_REMOVE;
-                    });
+                    }
                 } else {
-                    // Failed, clear flag immediately
-                    this._skipNextTiling = null;
+                    // Zone empty - normal tiling
+                    console.log(`[MOSAIC WM] DnD: zone ${this._currentZone} empty, applying tile`);
+                    
+                    // Set skip flag BEFORE applying tile to prevent signal handlers (like size-change)
+                    // from triggering a mosaic retile during the operation
+                    this._skipNextTiling = window.get_id();
+                    
+                    const success = edgeTiling.applyTile(window, this._currentZone, workArea);
+                    console.log(`[MOSAIC WM] Edge tiling: apply result = ${success}`);
+                    
+                    // Prevent mosaic from re-tiling this window immediately after edge tiling
+                    if (success) {
+                        // Short timeout to prevent immediate re-tiling
+                        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+                            this._skipNextTiling = null;
+                            return GLib.SOURCE_REMOVE;
+                        });
+                    } else {
+                        // Failed, clear flag immediately
+                        this._skipNextTiling = null;
+                    }
                 }
             } 
             // Note: Window restoration from edge tiling now happens during drag
