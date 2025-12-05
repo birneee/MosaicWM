@@ -516,6 +516,17 @@ export default class WindowMosaicExtension extends Extension {
     _sizeChangedHandler = (_, win) => {
         let window = win.meta_window;
         if(!this._sizeChanged && !windowing.isExcluded(window)) {
+            // Skip transient/temporary windows (e.g., clipboard windows from Neovim)
+            if (!windowing.isRelated(window)) {
+                return;
+            }
+            
+            // Skip tiny windows (clipboard helper windows are often 1x1)
+            const rect = window.get_frame_rect();
+            if (rect.width <= 10 || rect.height <= 10) {
+                return;
+            }
+            
             // Skip tiling if this window is being restored from edge tiling
             if (this._skipNextTiling === window.get_id()) {
                 console.log(`[MOSAIC WM] Skipping size change tiling for window ${window.get_id()} (restoring from edge tiling)`);
@@ -832,6 +843,11 @@ export default class WindowMosaicExtension extends Extension {
      * @param {Meta.Window} window - The window that was added
      */
     _windowAdded = (workspace, window) => {
+        // Skip transient/temporary windows (e.g., clipboard windows from Neovim)
+        if (!windowing.isRelated(window)) {
+            return;
+        }
+        
         // Save initial position IMMEDIATELY for animation later
         // This must happen before any tiling to capture the true starting position
         animations.saveInitialPosition(window);
@@ -956,6 +972,11 @@ export default class WindowMosaicExtension extends Extension {
      * @param {Meta.Window} window - The window that was removed
      */
     _windowRemoved = (workspace, window) => {
+        // Skip transient/temporary windows (e.g., clipboard windows from Neovim)
+        if (!windowing.isRelated(window)) {
+            return;
+        }
+        
         // Track previous workspace and timestamp for overview drag-drop detection
         this._windowPreviousWorkspace.set(window.get_id(), workspace.index());
         this._windowRemovedTimestamp.set(window.get_id(), Date.now());
