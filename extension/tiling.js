@@ -52,6 +52,7 @@ class WindowDescriptor{
     /**
  * Applies this descriptor's position to the actual window.
  * Finds the window by ID instead of index to support filtered window lists.
+ * Uses smooth animations during drag for non-dragged windows.
  * 
  * @param {Meta.Window[]} meta_windows - Array of actual windows
  * @param {number} x - New X position
@@ -61,7 +62,42 @@ draw(meta_windows, x, y) {
     // Find window by ID instead of index (supports filtered lists)
     const window = meta_windows.find(w => w.get_id() === this.id);
     if (window) {
-        window.move_frame(false, x, y);
+        // Check if this is a Mask (dragged window preview)
+        const isMask = masks[this.id];
+        
+        // During drag, animate non-dragged windows for smooth repositioning
+        if (isDragging && !isMask) {
+            const currentRect = window.get_frame_rect();
+            // Only animate if position actually changed
+            const positionChanged = Math.abs(currentRect.x - x) > 5 || Math.abs(currentRect.y - y) > 5;
+            
+            if (positionChanged) {
+                // Move to final position immediately
+                window.move_frame(false, x, y);
+                
+                // Animate from old position using actor translation
+                const windowActor = window.get_compositor_private();
+                if (windowActor) {
+                    const translateX = currentRect.x - x;
+                    const translateY = currentRect.y - y;
+                    
+                    // Set initial offset (window appears in old position)
+                    windowActor.set_translation(translateX, translateY, 0);
+                    
+                    // Animate to zero offset (slides to new position)
+                    windowActor.ease({
+                        translation_x: 0,
+                        translation_y: 0,
+                        duration: 200,
+                        mode: imports.gi.Clutter.AnimationMode.EASE_OUT_QUAD
+                    });
+                }
+            }
+            // If position hasn't changed, do nothing (window is already there)
+        } else {
+            // Normal immediate positioning (for Mask/preview)
+            window.move_frame(false, x, y);
+        }
     } else {
         console.warn(`[MOSAIC WM] Could not find window with ID ${this.id} for drawing`);
     }
