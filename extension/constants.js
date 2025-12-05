@@ -35,3 +35,16 @@ export const DRAG_UPDATE_INTERVAL_MS = 50;
  * Allows GNOME Shell to fully initialize before the extension starts tiling.
  */
 export const STARTUP_TILE_DELAY_MS = 300;
+
+/**
+ * Duration for window animations (in milliseconds).
+ * Used for smooth transitions when windows move or resize.
+ */
+export const ANIMATION_DURATION_MS = 350;
+
+/**
+ * Duration for window open/close animations (in milliseconds).
+ * Separate from general animations to allow independent tuning.
+ */
+export const ANIMATION_OPEN_CLOSE_DURATION_MS = 350;
+

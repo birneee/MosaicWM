@@ -10,6 +10,7 @@ import * as tiling from './tiling.js';
 import * as windowing from './windowing.js';
 import * as constants from './constants.js';
 import * as edgeTiling from './edgeTiling.js';
+import * as animations from './animations.js';
 
 // Module state for drag operations
 var dragStart = false; // Whether a drag operation is in progress
@@ -89,11 +90,18 @@ export function drag(meta_window, child_frame, id, windows) {
         console.log(`[MOSAIC WM] Drag: Setting swap ${id} <-> ${target_id}`);
     }
 
+    // Check if cursor is over an edge tiling zone
+    const zone = edgeTiling.detectZone(cursor.x, cursor.y, workArea, workspace);
+    const isOverEdgeZone = zone !== edgeTiling.TileZone.NONE;
+    
     // Re-tile with the temporary swap to show preview
-    // IMPORTANT: Pass meta_window so dragged window is excluded from mosaic calculation
-    if(tiling.tileWorkspaceWindows(workspace, meta_window, monitor)) {
+    // IMPORTANT: Only exclude dragged window if it's over an edge tiling zone
+    // Otherwise, show it in the mosaic preview
+    const windowToExclude = isOverEdgeZone ? meta_window : null;
+    
+    if(tiling.tileWorkspaceWindows(workspace, windowToExclude, monitor)) {
         tiling.clearTmpSwap();
-        tiling.tileWorkspaceWindows(workspace, meta_window, monitor)
+        tiling.tileWorkspaceWindows(workspace, windowToExclude, monitor)
     }
 
     // Continue drag loop if still dragging
@@ -111,6 +119,9 @@ export function startDrag(meta_window) {
     let workspace = meta_window.get_workspace()
     let monitor = meta_window.get_monitor();
     let meta_windows = windowing.getMonitorWorkspaceWindows(workspace, monitor);
+    
+    // Notify animations that drag started
+    animations.setDragging(true);
     
     // EDGE TILING AWARENESS: Detect edge-tiled windows and calculate remaining space
     const edgeTiledWindows = edgeTiling.getEdgeTiledWindows(workspace, monitor);
@@ -157,6 +168,9 @@ export function stopDrag(meta_window, skip_apply, skip_tiling) {
     let workspace = meta_window.get_workspace();
     dragStart = false;
     clearTimeout(dragTimeout);
+    
+    // Notify animations that drag ended (for smooth drop animation)
+    animations.setDragging(false);
     
     // Disable drag mode to re-enable snap logic
     tiling.disableDragMode();

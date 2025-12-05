@@ -28,6 +28,7 @@ import * as tiling from './tiling.js';
 import * as drawing from './drawing.js';
 import * as reordering from './reordering.js';
 import * as edgeTiling from './edgeTiling.js';
+import * as animations from './animations.js';
 import * as swapping from './swapping.js';
 import * as constants from './constants.js';
 import { SettingsOverrider } from './settingsOverrider.js';
@@ -818,6 +819,10 @@ export default class WindowMosaicExtension extends Extension {
      * @param {Meta.Window} window - The window that was added
      */
     _windowAdded = (workspace, window) => {
+        // Save initial position IMMEDIATELY for animation later
+        // This must happen before any tiling to capture the true starting position
+        animations.saveInitialPosition(window);
+        
         let timeout = setInterval(() => {
             const WORKSPACE = window.get_workspace();
             const WINDOW = window;
@@ -909,8 +914,21 @@ export default class WindowMosaicExtension extends Extension {
                     }
                 }
                 
-                // Tile the workspace
-                tiling.tileWorkspaceWindows(WORKSPACE, null, MONITOR, true);
+                // Wait for window to have valid geometry before tiling with animation
+                // This ensures animations work correctly (no 0x0 size)
+                const waitForGeometry = () => {
+                    const rect = WINDOW.get_frame_rect();
+                    if (rect.width > 0 && rect.height > 0) {
+                        console.log(`[MOSAIC WM] Window ${WINDOW.get_id()} has geometry ${rect.width}x${rect.height}, tiling with animation`);
+                        tiling.tileWorkspaceWindows(WORKSPACE, null, MONITOR, true);
+                        return GLib.SOURCE_REMOVE;
+                    }
+                    // Keep checking every 10ms until window has geometry
+                    return GLib.SOURCE_CONTINUE;
+                };
+                
+                // Start checking immediately
+                GLib.timeout_add(GLib.PRIORITY_DEFAULT, 10, waitForGeometry);
             }
         }, constants.WINDOW_VALIDITY_CHECK_INTERVAL_MS);
     }
@@ -1025,7 +1043,9 @@ export default class WindowMosaicExtension extends Extension {
 
 
         // Setup keyboard shortcuts
+        console.log('[MOSAIC WM] About to call _setupKeybindings()');
         this._setupKeybindings();
+        console.log('[MOSAIC WM] _setupKeybindings() completed');
 
         // Sort all workspaces at startup
         setTimeout(this._tileAllWorkspaces, constants.STARTUP_TILE_DELAY_MS);
@@ -1036,6 +1056,8 @@ export default class WindowMosaicExtension extends Extension {
      * Setup keyboard shortcuts for edge tiling
      */
     _setupKeybindings() {
+        console.log('[MOSAIC WM] *** _setupKeybindings called ***');
+        
         // Get settings using Extension's built-in method
         // This automatically uses the schema from metadata.json
         const settings = this.getSettings('org.gnome.shell.extensions.mosaic-wm');
@@ -1095,6 +1117,7 @@ export default class WindowMosaicExtension extends Extension {
         );
         
         // Swap left
+        console.log('[MOSAIC WM] Registering swap-left keybinding');
         Main.wm.addKeybinding(
             'swap-left',
             settings,
@@ -1104,6 +1127,7 @@ export default class WindowMosaicExtension extends Extension {
         );
         
         // Swap right
+        console.log('[MOSAIC WM] Registering swap-right keybinding');
         Main.wm.addKeybinding(
             'swap-right',
             settings,
@@ -1113,6 +1137,7 @@ export default class WindowMosaicExtension extends Extension {
         );
         
         // Swap up
+        console.log('[MOSAIC WM] Registering swap-up keybinding');
         Main.wm.addKeybinding(
             'swap-up',
             settings,
@@ -1122,6 +1147,7 @@ export default class WindowMosaicExtension extends Extension {
         );
         
         // Swap down
+        console.log('[MOSAIC WM] Registering swap-down keybinding');
         Main.wm.addKeybinding(
             'swap-down',
             settings,
@@ -1129,6 +1155,8 @@ export default class WindowMosaicExtension extends Extension {
             Shell.ActionMode.NORMAL,
             () => this._swapActiveWindow('down')
         );
+        
+        console.log('[MOSAIC WM] All swap keybindings registered successfully');
         
         console.log('[MOSAIC WM] Keyboard shortcuts registered');
     }
@@ -1162,15 +1190,22 @@ export default class WindowMosaicExtension extends Extension {
      * @private
      */
     _swapActiveWindow(direction) {
+        console.log(`[MOSAIC WM] *** SWAP SHORTCUT TRIGGERED *** Direction: ${direction}`);
         const focusedWindow = global.display.get_focus_window();
         
-        if (!focusedWindow || windowing.isExcluded(focusedWindow)) {
-            console.log('[MOSAIC WM] No valid focused window for swap');
+        if (!focusedWindow) {
+            console.log('[MOSAIC WM] SWAP FAILED: No focused window');
             return;
         }
         
-        console.log(`[MOSAIC WM] Swapping focused window ${focusedWindow.get_id()} in direction: ${direction}`);
+        if (windowing.isExcluded(focusedWindow)) {
+            console.log(`[MOSAIC WM] SWAP FAILED: Window ${focusedWindow.get_id()} is excluded`);
+            return;
+        }
+        
+        console.log(`[MOSAIC WM] SWAP: Calling swapping.swapWindow for window ${focusedWindow.get_id()} direction: ${direction}`);
         swapping.swapWindow(focusedWindow, direction);
+        console.log(`[MOSAIC WM] SWAP: swapWindow call completed`);
     }
 
     disable() {
