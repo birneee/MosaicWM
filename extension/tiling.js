@@ -253,12 +253,19 @@ export class TilingManager {
         };
     }
 
-    _getWorkingInfo(workspace, window, _monitor) {
+    _getWorkingInfo(workspace, window, _monitor, excludeFromTiling = false) {
         let current_monitor = _monitor;
         if(current_monitor === undefined)
             current_monitor = window.get_monitor();
 
         let meta_windows = this._windowingManager.getMonitorWorkspaceWindows(workspace, current_monitor);
+        
+        // Exclude the reference window only if explicitly requested (for overflow scenarios)
+        if (window && excludeFromTiling && !this.isDragging) {
+            const windowId = window.get_id();
+            meta_windows = meta_windows.filter(w => w.get_id() !== windowId);
+            Logger.log(`[MOSAIC WM] Excluding overflow window ${windowId} from mosaic calculation`);
+        }
         
         if (this.isDragging && this.dragRemainingSpace && window) {
             const draggedId = window.get_id();
@@ -376,8 +383,8 @@ export class TilingManager {
         return true;
     }
 
-    tileWorkspaceWindows(workspace, reference_meta_window, _monitor, keep_oversized_windows) {
-        let working_info = this._getWorkingInfo(workspace, reference_meta_window, _monitor);
+    tileWorkspaceWindows(workspace, reference_meta_window, _monitor, keep_oversized_windows, excludeFromTiling = false) {
+        let working_info = this._getWorkingInfo(workspace, reference_meta_window, _monitor, excludeFromTiling);
         if(!working_info) return;
         let meta_windows = working_info.meta_windows;
         let windows = working_info.windows;

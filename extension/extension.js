@@ -35,6 +35,9 @@ export default class WindowMosaicExtension extends Extension {
         this._sizeChanged = false;
         
         this._resizeOverflowWindow = null;
+        this._resizeInOverflow = false;
+        this._resizeDebounceTimeout = null;
+        this._resizeGracePeriod = 0;
         this._tileTimeout = null;
         this._windowPreviousWorkspace = new Map();
         this._windowRemovedTimestamp = new Map();
@@ -442,44 +445,91 @@ export default class WindowMosaicExtension extends Extension {
             let monitor = window.get_monitor();
             
             if (!this.windowingManager.isMaximizedOrFullscreen(window)) {
-                let canFit = this.tilingManager.canFitWindow(window, workspace, monitor);
+                const isManualResize = this._currentGrabOp && constants.RESIZE_GRAB_OPS.includes(this._currentGrabOp);
                 
-                if (!canFit) {
-                    const isManualResize = this._currentGrabOp && constants.RESIZE_GRAB_OPS.includes(this._currentGrabOp);
-                    
-                    if (this._resizeOverflowWindow !== window) {
-                        this._resizeOverflowWindow = window;
-                        
-                        if (isManualResize) {
-                            Logger.log('[MOSAIC WM] Resize overflow detected during manual resize - will move on release');
-                        } else {
-                            Logger.log('[MOSAIC WM] Resize overflow detected (automatic) - moving window immediately');
-                            
-                            let oldWorkspace = workspace;
-                            let newWorkspace = this.windowingManager.moveOversizedWindow(window);
-                            if (newWorkspace) {
-                                this.tilingManager.tileWorkspaceWindows(oldWorkspace, false, monitor, false);
-                                workspace = newWorkspace;
-                            }
-                            this._resizeOverflowWindow = null;
-                            this._sizeChanged = false;
-                            return;
-                        }
+                if (isManualResize) {
+                    if (this._resizeDebounceTimeout) {
+                        GLib.source_remove(this._resizeDebounceTimeout);
+                        this._resizeDebounceTimeout = null;
                     }
                     
-                    if (!isManualResize) {
+                    // Need some tests how much debounce is needed
+                    this._resizeDebounceTimeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 0, () => {
+                        this._resizeDebounceTimeout = null;
+                        
+                        let canFit = this.tilingManager.canFitWindow(window, workspace, monitor);
+                        
+                        if (!canFit && !this._resizeInOverflow) {
+                            Logger.log('[MOSAIC WM] Manual resize: entering overflow');
+                            this._resizeInOverflow = true;
+                            this._resizeOverflowWindow = window;
+                            // Visual indicator - make window semi-transparent
+                            const actor = window.get_compositor_private();
+                            if (actor) {
+                                actor.opacity = 160;
+                            }
+                            this.tilingManager.tileWorkspaceWindows(workspace, window, monitor, true, true);
+                        } else if (canFit && this._resizeInOverflow) {
+                            Logger.log('[MOSAIC WM] Manual resize: exiting overflow');
+                            this._resizeInOverflow = false;
+                            // Restore opacity
+                            const actor = window.get_compositor_private();
+                            if (actor) {
+                                actor.opacity = 255;
+                            }
+                            this._resizeOverflowWindow = null;
+                            this.tilingManager.tileWorkspaceWindows(workspace, null, monitor, true, false);
+                        } else {
+                            const excludeWindow = this._resizeInOverflow ? window : null;
+                            const excludeFromTiling = this._resizeInOverflow;
+                            this.tilingManager.tileWorkspaceWindows(workspace, excludeWindow, monitor, true, excludeFromTiling);
+                        }
+                        
+                        return GLib.SOURCE_REMOVE;
+                    });
+                    
+                    this._sizeChanged = false;
+                    return;
+                }
+                
+                let canFit = this.tilingManager.canFitWindow(window, workspace, monitor);
+                
+                // Skip automatic overflow detection during grace period after grab-op-end
+                const now = Date.now();
+                if (this._resizeGracePeriod && (now - this._resizeGracePeriod) < 200) {
+                    Logger.log('[MOSAIC WM] Skipping automatic overflow check - in grace period');
+                    this._sizeChanged = false;
+                    return;
+                }
+                
+                if (!canFit) {
+                    if (this._resizeOverflowWindow !== window) {
+                        Logger.log('[MOSAIC WM] Resize overflow detected (automatic) - moving window immediately');
+                        this._resizeOverflowWindow = window;
+                        
+                        let oldWorkspace = workspace;
+                        let newWorkspace = this.windowingManager.moveOversizedWindow(window);
+                        if (newWorkspace) {
+                            this.tilingManager.tileWorkspaceWindows(oldWorkspace, false, monitor, false);
+                            workspace = newWorkspace;
+                        }
+                        this._resizeOverflowWindow = null;
                         this._sizeChanged = false;
                         return;
                     }
-                } else {
-                    if (this._resizeOverflowWindow === window) {
-                        this._resizeOverflowWindow = null;
-                        Logger.log('[MOSAIC WM] Resize overflow cleared - window fits again');
-                    }
+                } else if (this._resizeOverflowWindow === window) {
+                    this._resizeOverflowWindow = null;
+                    Logger.log('[MOSAIC WM] Resize overflow cleared - window fits again');
+                }
+                
+                // If window fits and no overflow change, skip unnecessary re-tiling
+                if (canFit) {
+                    this._sizeChanged = false;
+                    return;
                 }
             }
             
-            this.tilingManager.tileWorkspaceWindows(workspace, window, monitor, true);
+            this.tilingManager.tileWorkspaceWindows(workspace, null, monitor, true);
             this._sizeChanged = false;
         }
     }
@@ -489,6 +539,7 @@ export default class WindowMosaicExtension extends Extension {
         
         const isResizeOp = constants.RESIZE_GRAB_OPS.includes(grabpo);
         if (isResizeOp) {
+            this._resizeInOverflow = false;
             this.animationsManager.setResizingWindow(window.get_id());
             Logger.log(`[MOSAIC WM] Tracking resize for window ${window.get_id()}, grabpo=${grabpo}`);
         }
@@ -714,8 +765,22 @@ export default class WindowMosaicExtension extends Extension {
                     this.edgeTilingManager.fixQuarterPairSizes(window, tileState.zone);
                 }
                 
-                if (this._resizeOverflowWindow === window) {
+                if (this._resizeDebounceTimeout) {
+                    GLib.source_remove(this._resizeDebounceTimeout);
+                    this._resizeDebounceTimeout = null;
+                }
+                
+                // Set grace period to ignore residual size-changed events
+                this._resizeGracePeriod = Date.now();
+                
+                if (this._resizeInOverflow || this._resizeOverflowWindow === window) {
                     Logger.log('[MOSAIC WM] Resize ended with overflow - moving window to new workspace');
+                    this._resizeInOverflow = false;
+                    // Restore opacity before moving
+                    const actor = window.get_compositor_private();
+                    if (actor) {
+                        actor.opacity = 255;
+                    }
                     let oldWorkspace = window.get_workspace();
                     let newWorkspace = this.windowingManager.moveOversizedWindow(window);
                     if (newWorkspace) {
@@ -723,7 +788,6 @@ export default class WindowMosaicExtension extends Extension {
                     }
                     this._resizeOverflowWindow = null;
                 } else if (!isEdgeTiled) {
-                    // Only tile if not edge-tiled (edge-tiled windows already handled above)
                     this._tileWindowWorkspace(window);
                 }
             }
@@ -1052,6 +1116,12 @@ export default class WindowMosaicExtension extends Extension {
     }
 
     disable() {
+        Logger.log('[MOSAIC WM] Disabling extension');
+        
+        if (this._resizeDebounceTimeout) {
+            GLib.source_remove(this._resizeDebounceTimeout);
+            this._resizeDebounceTimeout = null;
+        }
         Logger.info("[MOSAIC WM]: Disabling Mosaic layout manager.");
         
         if (this._settingsOverrider) {
