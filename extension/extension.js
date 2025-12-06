@@ -816,7 +816,9 @@ export default class WindowMosaicExtension extends Extension {
         if(!windowing.isExcluded(window)) {
             // Pass skip_tiling=true if we just applied edge tiling
             const skipTiling = this._skipNextTiling === window.get_id();
+            console.log(`[MOSAIC WM] _grabOpEndHandler: calling stopDrag for window ${window.get_id()}, grabpo=${grabpo}, skipTiling=${skipTiling}`);
             reordering.stopDrag(window, false, skipTiling);
+            console.log(`[MOSAIC WM] _grabOpEndHandler: stopDrag completed`);
             
             // Log grab operation for debugging
             console.log(`[MOSAIC WM] Grab operation ended: ${grabpo}`);

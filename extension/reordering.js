@@ -13,8 +13,8 @@ import * as edgeTiling from './edgeTiling.js';
 import * as animations from './animations.js';
 
 // Module state for drag operations
-var dragStart = false; // Whether a drag operation is in progress
-var dragTimeout; // Timeout ID for drag update loop
+let dragStart = false;
+let dragTimeout = null;
 
 /**
  * Calculates the distance from the cursor to the center of a window frame.
@@ -116,6 +116,7 @@ export function drag(meta_window, child_frame, id, windows) {
  * @param {Meta.Window} meta_window - The window being dragged
  */
 export function startDrag(meta_window) {
+    console.log(`[MOSAIC WM] startDrag called for window ${meta_window.get_id()}`);
     let workspace = meta_window.get_workspace()
     let monitor = meta_window.get_monitor();
     let meta_windows = windowing.getMonitorWorkspaceWindows(workspace, monitor);
@@ -165,6 +166,7 @@ export function startDrag(meta_window) {
  * @param {boolean} skip_tiling - If true, don't re-tile the workspace (used when edge tiling is applied)
  */
 export function stopDrag(meta_window, skip_apply, skip_tiling) {
+    console.log(`[MOSAIC WM] stopDrag called for window ${meta_window.get_id()}, dragStart was: ${dragStart}`);
     let workspace = meta_window.get_workspace();
     dragStart = false;
     clearTimeout(dragTimeout);
