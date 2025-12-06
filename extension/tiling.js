@@ -1,10 +1,8 @@
-import * as Logger from './logger.js';
-/**
- * Tiling Manager
- * 
- * Implements core tiling algorithm and state management.
- */
+// Copyright 2025 Cleo Menezes Jr.
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Core mosaic tiling algorithm and layout management
 
+import * as Logger from './logger.js';
 import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
 import Shell from 'gi://Shell';
@@ -16,11 +14,11 @@ import { TileZone } from './edgeTiling.js';
 export class TilingManager {
     constructor() {
         // Module-level state converted to class properties
-        this.masks = []; // Visual feedback masks for windows being dragged
-        this.working_windows = []; // Current set of window descriptors being tiled
-        this.tmp_swap = []; // Temporary swap for preview during drag
-        this.isDragging = false; // Flag to track drag state
-        this.dragRemainingSpace = null; // Remaining space to use during drag
+        this.masks = [];
+        this.working_windows = [];
+        this.tmp_swap = [];
+        this.isDragging = false;
+        this.dragRemainingSpace = null;
         
         this._edgeTilingManager = null;
         this._drawingManager = null;
@@ -134,10 +132,6 @@ export class TilingManager {
         }
     }
 
-    /**
-     * Creates a window descriptor
-     * @private
-     */
     _createDescriptor(meta_window, monitor, index, reference_window) {
         if(reference_window)
             if(meta_window.get_id() === reference_window.get_id())
@@ -150,9 +144,6 @@ export class TilingManager {
         return new WindowDescriptor(meta_window, index);
     }
 
-    /**
-     * Convert meta windows to descriptors
-     */
     windowsToDescriptors(meta_windows, monitor, reference_window) {
         let descriptors = [];
         for(let i = 0; i < meta_windows.length; i++) {
@@ -163,14 +154,9 @@ export class TilingManager {
         return descriptors;
     }
 
-    /**
-     * Core tiling algorithm
-     * @private
-     */
     _tile(windows, work_area) {
         let vertical = false;
         
-        // Calculate total required area first
         let totalRequiredArea = 0;
         for(let window of windows) {
             totalRequiredArea += (window.width * window.height);
@@ -185,17 +171,15 @@ export class TilingManager {
 
         let overflow = false;
 
-        if(!vertical) { // Horizontal tiling mode
+        if(!vertical) {
             let window_widths = 0;
             windows.map(w => window_widths += w.width + constants.WINDOW_SPACING)
             window_widths -= constants.WINDOW_SPACING;
 
-            // Determine how many levels we need
             let n_levels = Math.round(window_widths / work_area.width) + 1;
             let level = levels[0];
             let level_index = 0;
             
-            // Distribute windows across levels
             for(let window of windows) {
                 if(level.width + constants.WINDOW_SPACING + window.width > work_area.width) {
                     total_width = Math.max(level.width, total_width);
@@ -276,14 +260,12 @@ export class TilingManager {
 
         let meta_windows = this._windowingManager.getMonitorWorkspaceWindows(workspace, current_monitor);
         
-        // DRAG MODE
         if (this.isDragging && this.dragRemainingSpace && window) {
             const draggedId = window.get_id();
             meta_windows = meta_windows.filter(w => w.get_id() !== draggedId);
             Logger.log(`[MOSAIC WM] Excluding dragged window ${draggedId} from mosaic calculation`);
         }
         
-        // EDGE TILING AWARENESS
         let edgeTiledWindows = [];
         if (this._edgeTilingManager) {
             edgeTiledWindows = this._edgeTilingManager.getEdgeTiledWindows(workspace, current_monitor);
@@ -394,9 +376,6 @@ export class TilingManager {
         return true;
     }
 
-    /**
-     * Tiles windows in the workspace
-     */
     tileWorkspaceWindows(workspace, reference_meta_window, _monitor, keep_oversized_windows) {
         let working_info = this._getWorkingInfo(workspace, reference_meta_window, _monitor);
         if(!working_info) return;
@@ -407,7 +386,6 @@ export class TilingManager {
 
         const workspace_windows = this._windowingManager.getMonitorWorkspaceWindows(workspace, monitor);
         
-        // EDGE TILING DETECTION
         let edgeTiledWindows = [];
         if (this._edgeTilingManager) {
             edgeTiledWindows = this._edgeTilingManager.getEdgeTiledWindows(workspace, monitor);
@@ -427,7 +405,6 @@ export class TilingManager {
             if ((hasLeftFull || hasLeftQuarters) && (hasRightFull || hasRightQuarters)) {
                 Logger.log('[MOSAIC WM] Both sides edge-tiled - workspace fully occupied');
                 
-                // Get non-edge-tiled windows
                 const nonEdgeTiledMeta = this._edgeTilingManager.getNonEdgeTiledWindows(workspace, monitor);
                 
                 // Move all non-edge-tiled windows to new workspace
@@ -468,7 +445,6 @@ export class TilingManager {
             }
         }
         
-        // DRAG MODE: Use stored remaining space for calculations if in drag mode
         const tileArea = this.isDragging && this.dragRemainingSpace ? this.dragRemainingSpace : work_area;
         
         let tile_info = this._tile(windows, tileArea);
@@ -503,7 +479,6 @@ export class TilingManager {
             animationsHandledPositioning = this._animateTileLayout(tile_info, tileArea, meta_windows, reference_meta_window);
         }
         
-        // SPECIAL CASE: If dragging and no windows to tile, still draw the mask preview
         if (this.isDragging && windows.length === 0 && reference_meta_window) {
             const mask = this.getMask(reference_meta_window);
             if (mask) {
@@ -529,9 +504,6 @@ export class TilingManager {
         return overflow;
     }
 
-    /**
-     * Checks if a new window fits in the workspace
-     */
     canFitWindow(window, workspace, monitor) {
         Logger.log(`[MOSAIC WM] canFitWindow: Checking if window can fit in workspace ${workspace.index()}`);
         
@@ -540,14 +512,12 @@ export class TilingManager {
             return true;
         }
         
-        // Get workspace information using _getWorkingInfo (handles drag exclusions etc)
         const working_info = this._getWorkingInfo(workspace, window, monitor);
         if (!working_info) {
             Logger.log('[MOSAIC WM] canFitWindow: No working info - cannot fit');
             return false;
         }
 
-        // RULE 1: Workspace with maximized window = completely occupied
         for (const existing_window of working_info.meta_windows) {
             if(this._windowingManager.isMaximizedOrFullscreen(existing_window)) {
                 Logger.log('[MOSAIC WM] canFitWindow: Workspace has maximized window - cannot fit');
@@ -555,7 +525,6 @@ export class TilingManager {
             }
         }
 
-        // RULE 2: Check for edge-tiled windows and use remaining space
         let edgeTiledWindows = [];
         if (this._edgeTilingManager) {
             edgeTiledWindows = this._edgeTilingManager.getEdgeTiledWindows(workspace, monitor);
@@ -582,7 +551,6 @@ export class TilingManager {
             Logger.log(`[MOSAIC WM] canFitWindow: Using remaining space after snap: ${availableSpace.width}x${availableSpace.height}`);
         }
 
-        // RULE 3: Try adding window to layout
         const edgeTiledIds = edgeTiledWindows.map(s => s.window.get_id());
         
         let windows = working_info.windows.filter(w => 
@@ -626,9 +594,6 @@ export class TilingManager {
 
 }
 
-/**
- * WindowDescriptor class
- */
 class WindowDescriptor {
     constructor(meta_window, index) {
         let frame = meta_window.get_frame_rect();
@@ -674,9 +639,6 @@ class WindowDescriptor {
     }
 }
 
-/**
- * Level class
- */
 function Level(work_area) {
     this.x = 0;
     this.y = 0;
@@ -702,7 +664,6 @@ Level.prototype.draw_horizontal = function(meta_windows, work_area, y, masks, is
 Level.prototype.draw_vertical = function(meta_windows, x, masks, isDragging, drawingManager) {
     let y = this.y;
     for(let window of this.windows) {
-        // Simple vertical draw implementation if needed
         window.draw(meta_windows, x, y, masks, isDragging, drawingManager);
         y += window.height + constants.WINDOW_SPACING;
     }

@@ -1,10 +1,8 @@
-import * as Logger from './logger.js';
-/**
- * Reordering Manager
- * 
- * Handles manual window reordering via drag-and-drop.
- */
+// Copyright 2025 Cleo Menezes Jr.
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Window reordering via drag and drop
 
+import * as Logger from './logger.js';
 import GLib from 'gi://GLib';
 import * as constants from './constants.js';
 import { TileZone } from './edgeTiling.js';
@@ -37,20 +35,12 @@ export class ReorderingManager {
         this._windowingManager = manager;
     }
 
-    /**
-     * Calculates the distance from the cursor to the center of a window frame.
-     * @private
-     */
     _cursorDistance(cursor, frame) {
         let x = cursor.x - (frame.x + frame.width / 2);
         let y = cursor.y - (frame.y + frame.height / 2);
         return Math.sqrt(Math.pow(x, 2) + Math.pow(y, 2));
     }
 
-    /**
-     * Main drag loop function.
-     * @private
-     */
     _drag(meta_window, child_frame, id, windows) {
         if (!this._tilingManager) return;
         
@@ -58,7 +48,6 @@ export class ReorderingManager {
         let monitor = meta_window.get_monitor();
         let workArea = workspace.get_work_area_for_monitor(monitor);
 
-        // Get current cursor position
         let _cursor = global.get_pointer();
         let cursor = {
             x: _cursor[0],
@@ -72,10 +61,8 @@ export class ReorderingManager {
         }
         const edgeTiledIds = edgeTiledWindows.map(s => s.window.get_id());
         
-        // Filter windows to only non-edge-tiled ones for reordering
         const reorderableWindows = windows.filter(w => !edgeTiledIds.includes(w.id));
         
-        // If dragged window is edge-tiled, don't allow it to be reordered
         if (edgeTiledIds.includes(id)) {
             if(this.dragStart) {
                 this._dragTimeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT, constants.DRAG_UPDATE_INTERVAL_MS, () => {
@@ -86,7 +73,6 @@ export class ReorderingManager {
             return;
         }
 
-        // Find the window closest to the cursor
         let minimum_distance = Infinity;
         let target_id = null;
         for(let window of reorderableWindows) {
@@ -98,7 +84,6 @@ export class ReorderingManager {
             }
         }
 
-        // Set up temporary swap
         if(target_id === id || target_id === null) {
             this._tilingManager.clearTmpSwap();
             Logger.log('[MOSAIC WM] Drag: No swap (cursor not over another window)');
@@ -107,7 +92,6 @@ export class ReorderingManager {
             Logger.log(`[MOSAIC WM] Drag: Setting swap ${id} <-> ${target_id}`);
         }
 
-        // Check if cursor is over an edge tiling zone
         let isOverEdgeZone = false;
         if (this._edgeTilingManager) {
             const zone = this._edgeTilingManager.detectZone(cursor.x, cursor.y, workArea, workspace);
@@ -133,7 +117,6 @@ export class ReorderingManager {
              this._tilingManager.tileWorkspaceWindows(workspace, windowToExclude, monitor);
         }
 
-        // Continue drag loop
         if(this.dragStart) {
             this._dragTimeout = GLib.timeout_add(GLib.PRIORITY_DEFAULT, constants.DRAG_UPDATE_INTERVAL_MS, () => {
                 this._drag(meta_window, child_frame, id, windows);
@@ -142,9 +125,6 @@ export class ReorderingManager {
         }
     }
 
-    /**
-     * Starts a drag operation for a window.
-     */
     startDrag(meta_window) {
         if (!this._tilingManager) return;
         
@@ -167,13 +147,10 @@ export class ReorderingManager {
         const nonEdgeTiledMetaWindows = meta_windows.filter(w => !edgeTiledIds.includes(w.get_id()));
         Logger.log(`[MOSAIC WM] startDrag: Total windows: ${meta_windows.length}, Edge-tiled: ${edgeTiledWindows.length}, Non-edge-tiled: ${nonEdgeTiledMetaWindows.length}`);
         
-        // Apply swaps to non-edge-tiled
         this._tilingManager.applySwaps(workspace, nonEdgeTiledMetaWindows);
         
-        // Create descriptors
         let descriptors = this._tilingManager.windowsToDescriptors(nonEdgeTiledMetaWindows, monitor);
         
-        // Calculate remaining space
         let remainingSpace = null;
         if (edgeTiledWindows.length > 0 && this._edgeTilingManager) {
             remainingSpace = this._edgeTilingManager.calculateRemainingSpace(workspace, monitor);
@@ -186,10 +163,8 @@ export class ReorderingManager {
         this._tilingManager.enableDragMode(remainingSpace);
 
         this.dragStart = true;
-        // Deep copy descriptors to avoid mutation issues during drag loop if any
         const descriptorsCopy = JSON.parse(JSON.stringify(descriptors));
         
-        // Safety timeout: Force stop drag after 10 seconds to prevent infinite loops
         if (this._dragSafetyTimeout) {
             GLib.source_remove(this._dragSafetyTimeout);
             this._dragSafetyTimeout = 0;
@@ -206,9 +181,6 @@ export class ReorderingManager {
         this._drag(meta_window, meta_window.get_frame_rect(), meta_window.get_id(), descriptorsCopy);
     }
 
-    /**
-     * Stops a drag operation.
-     */
     stopDrag(meta_window, skip_apply, skip_tiling) {
         if (!this._tilingManager) return;
         
@@ -221,7 +193,6 @@ export class ReorderingManager {
             this._dragTimeout = 0;
         }
         
-        // Clear safety timeout since drag ended normally
         if (this._dragSafetyTimeout) {
             GLib.source_remove(this._dragSafetyTimeout);
             this._dragSafetyTimeout = 0;
@@ -246,9 +217,6 @@ export class ReorderingManager {
         }
     }
 
-    /**
-     * Cleanup and destroy manager
-     */
     destroy() {
         if (this._dragTimeout) {
             GLib.source_remove(this._dragTimeout);

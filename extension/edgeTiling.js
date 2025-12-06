@@ -1,3 +1,7 @@
+// Copyright 2025 Cleo Menezes Jr.
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Edge tiling (snap to screen edges) functionality
+
 import * as Logger from './logger.js';
 import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
@@ -5,13 +9,6 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as animations from './animations.js';
 import * as constants from './constants.js';
 
-/**
- * Edge Tiling Zones
- * 
- * 6-zone system:
- * - Left/Right Full: 50% width, 100% height
- * - Corners: 50% width, 50% height (TL, TR, BL, BR)
- */
 export const TileZone = {
     NONE: 0,
     LEFT_FULL: 1,
@@ -48,38 +45,21 @@ export class EdgeTilingManager {
         this._animationsManager = manager;
     }
 
-    /**
-     * Check if edge tiling is currently active (during drag)
-     * @returns {boolean}
-     */
     isEdgeTilingActive() {
         return this._isEdgeTilingActive;
     }
 
-    /**
-     * Get the window currently being edge-tiled
-     * @returns {Meta.Window|null}
-     */
     getActiveEdgeTilingWindow() {
         return this._activeEdgeTilingWindow;
     }
 
-    /**
-     * Set edge tiling active state
-     * @param {boolean} active
-     * @param {Meta.Window|null} window
-     */
     setEdgeTilingActive(active, window = null) {
         Logger.log(`[MOSAIC WM] Edge tiling state: ${this._isEdgeTilingActive} -> ${active}, window: ${window ? window.get_id() : 'null'}`);
         this._isEdgeTilingActive = active;
         this._activeEdgeTilingWindow = window;
     }
 
-    /**
-     * Clear all window states (cleanup)
-     */
     clearAllStates() {
-        // Remove all listeners first
         this._resizeListeners.forEach((signalId, winId) => {
             const window = this._findWindowById(winId);
             if (window) {
@@ -139,19 +119,9 @@ export class EdgeTilingManager {
         return false;
     }
 
-    /**
-     * Detect which edge tiling zone the cursor is in
-     * @param {number} cursorX
-     * @param {number} cursorY
-     * @param {Object} workArea
-     * @param {Meta.Workspace} workspace
-     * @returns {number} TileZone enum value
-     */
     detectZone(cursorX, cursorY, workArea, workspace) {
         const threshold = constants.EDGE_TILING_THRESHOLD;
         const thirdY = workArea.height / 3;
-        
-        if (cursorY < workArea.y + threshold) return TileZone.FULLSCREEN;
         
         if (cursorX < workArea.x + threshold) {
             const hasLeftWindows = this._hasEdgeTiledWindows(workspace, 'left');
@@ -244,13 +214,6 @@ export class EdgeTilingManager {
         return null;
     }
 
-    /**
-     * Get rectangle for a tile zone
-     * @param {number} zone
-     * @param {Object} workArea
-     * @param {Meta.Window} [windowToTile]
-     * @returns {Object|null}
-     */
     getZoneRect(zone, workArea, windowToTile = null) {
         if (!workArea) return null;
         
@@ -364,10 +327,6 @@ export class EdgeTilingManager {
     }
 
 
-    /**
-     * Save window's current state before tiling
-     * @param {Meta.Window} window
-     */
     saveWindowState(window) {
         const winId = window.get_id();
         const existingState = this._windowStates.get(winId);
@@ -388,21 +347,10 @@ export class EdgeTilingManager {
         Logger.log(`[MOSAIC WM] Saved window ${winId} PRE-TILING state: ${frame.width}x${frame.height}`);
     }
 
-    /**
-     * Get saved window state
-     * @param {Meta.Window} window
-     * @returns {Object|undefined} Saved state or undefined
-     */
     getWindowState(window) {
         return this._windowStates.get(window.get_id());
     }
 
-    /**
-     * Get all edge-tiled windows in a workspace
-     * @param {Meta.Workspace} workspace
-     * @param {number} monitor
-     * @returns {Array<{window: Meta.Window, zone: number}>}
-     */
     getEdgeTiledWindows(workspace, monitor) {
         const windows = workspace.list_windows().filter(w => 
             w.get_monitor() === monitor && 
@@ -416,12 +364,6 @@ export class EdgeTilingManager {
             .map(({window, state}) => ({window, zone: state.zone}));
     }
 
-    /**
-     * Get all non-edge-tiled windows in a workspace
-     * @param {Meta.Workspace} workspace
-     * @param {number} monitor
-     * @returns {Array<Meta.Window>}
-     */
     getNonEdgeTiledWindows(workspace, monitor) {
         const windows = workspace.list_windows().filter(w => 
             w.get_monitor() === monitor && 
@@ -435,13 +377,6 @@ export class EdgeTilingManager {
         });
     }
 
-    /**
-     * Get the window currently occupying a specific zone
-     * @param {number} zone
-     * @param {Meta.Workspace} workspace
-     * @param {number} monitor
-     * @returns {Meta.Window|null}
-     */
     getWindowInZone(zone, workspace, monitor) {
         const edgeTiledWindows = this.getEdgeTiledWindows(workspace, monitor);
         
@@ -453,12 +388,6 @@ export class EdgeTilingManager {
         return null;
     }
 
-    /**
-     * Calculate remaining workspace space after edge-tiled windows
-     * @param {Meta.Workspace} workspace
-     * @param {number} monitor
-     * @returns {Object} Remaining space rectangle {x, y, width, height}
-     */
     calculateRemainingSpace(workspace, monitor) {
         const workArea = workspace.get_work_area_for_monitor(monitor);
         const edgeTiledWindows = this.getEdgeTiledWindows(workspace, monitor);
@@ -498,12 +427,6 @@ export class EdgeTilingManager {
         return workArea;
     }
 
-    /**
-     * Calculate remaining workspace space for a specific zone (for preview)
-     * @param {number} zone
-     * @param {Object} workArea
-     * @returns {Object}
-     */
     calculateRemainingSpaceForZone(zone, workArea) {
         const halfWidth = Math.floor(workArea.width / 2);
         
@@ -533,10 +456,6 @@ export class EdgeTilingManager {
         }
     }
 
-    /**
-     * Clear saved window state
-     * @param {Meta.Window} window
-     */
     clearWindowState(window) {
         const winId = window.get_id();
         const state = this._windowStates.get(winId);
@@ -580,31 +499,16 @@ export class EdgeTilingManager {
         this._windowStates.delete(winId);
     }
 
-    /**
-     * Register an auto-tile dependency
-     * @param {number} dependentId
-     * @param {number} masterId
-     */
     registerAutoTileDependency(dependentId, masterId) {
         this._autoTiledDependencies.set(dependentId, masterId);
         Logger.log(`[MOSAIC WM] Registered auto-tile dependency: ${dependentId} depends on ${masterId}`);
     }
 
-    /**
-     * Check if window is currently edge-tiled
-     * @param {Meta.Window} window
-     * @returns {boolean}
-     */
     isEdgeTiled(window) {
         const state = this._windowStates.get(window.get_id());
         return state && state.zone !== TileZone.NONE;
     }
 
-    /**
-     * Check if a single quarter tile should expand to half tile
-     * @param {Meta.Workspace} workspace
-     * @param {number} monitor
-     */
     checkQuarterExpansion(workspace, monitor) {
         const edgeTiledWindows = this.getEdgeTiledWindows(workspace, monitor);
         if (edgeTiledWindows.length === 0) return;
@@ -690,10 +594,6 @@ export class EdgeTilingManager {
     }
 
 
-    /**
-     * Set the tiling manager instance
-     * @param {Object} tilingManager
-     */
     setTilingManager(tilingManager) {
         this._tilingManager = tilingManager;
     }
@@ -719,14 +619,6 @@ export class EdgeTilingManager {
         return true;
     }
 
-    /**
-     * Apply edge tiling to a window
-     * @param {Meta.Window} window
-     * @param {number} zone - TileZone enum value
-     * @param {Object} workArea - Work area rectangle
-     * @param {boolean} skipOverflowCheck - If true, skip mosaic overflow check (for swaps)
-     * @returns {boolean} Success
-     */
     applyTile(window, zone, workArea, skipOverflowCheck = false) {
         this.saveWindowState(window);
         

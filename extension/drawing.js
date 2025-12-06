@@ -1,12 +1,7 @@
+// Copyright 2025 Cleo Menezes Jr.
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Visual feedback and preview rendering
 import * as Logger from './logger.js';
-/**
- * Drawing Manager
- * 
- * Handles visual feedback elements like:
- * - Debug rectangles (for drag debugging)
- * - Tile preview overlays (for edge tiling validation)
- */
-
 import st from 'gi://St';
 import * as main from 'resource:///org/gnome/shell/ui/main.js';
 
@@ -25,9 +20,6 @@ export class DrawingManager {
         this._edgeTilingManager = manager;
     }
 
-    /**
-     * Creates a visual feedback rectangle at the specified position.
-     */
     rect(x, y, w, h) {
         // Hide edge tiling preview when showing mosaic preview
         this.hideTilePreview();
@@ -43,9 +35,6 @@ export class DrawingManager {
         main.uiGroup.add_child(box);
     }
 
-    /**
-     * Removes all visual feedback boxes from the screen.
-     */
     removeBoxes() {
         for(let box of this._boxes) {
             main.uiGroup.remove_child(box);
@@ -53,9 +42,6 @@ export class DrawingManager {
         this._boxes = [];
     }
 
-    /**
-     * Show edge tiling preview overlay
-     */
     showTilePreview(zone, workArea, window = null) {
         // Hide mosaic preview when showing edge tiling preview
         this.removeBoxes();
@@ -81,18 +67,12 @@ export class DrawingManager {
         this._tilePreview.show();
     }
 
-    /**
-     * Hide edge tiling preview overlay
-     */
     hideTilePreview() {
         if (this._tilePreview) {
             this._tilePreview.hide();
         }
     }
 
-    /**
-     * Clears all visual actors created by this module.
-     */
     clearActors() {
         this.removeBoxes();
         if (this._tilePreview) {

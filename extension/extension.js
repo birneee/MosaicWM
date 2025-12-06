@@ -1,23 +1,7 @@
-import * as Logger from './logger.js';
-/* extension.js
- *
- * This program is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
- *
- * SPDX-License-Identifier: GPL-2.0-or-later
- */
+// Copyright 2025 Cleo Menezes Jr.
+// SPDX-License-Identifier: GPL-3.0-or-later
 
-/* exported init */
+import * as Logger from './logger.js';
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
@@ -42,8 +26,7 @@ import { AnimationsManager } from './animations.js';
 export default class WindowMosaicExtension extends Extension {
     constructor(metadata) {
         super(metadata);
-        // Only initialize primitive values and built-in JS objects (Map, Set, Array)
-        // Per GNOME guidelines: No GObject classes or complex objects in constructor
+        
         this._wmEventIds = [];
         this._displayEventIds = [];
         this._workspaceManEventIds = [];
@@ -59,7 +42,6 @@ export default class WindowMosaicExtension extends Extension {
         this._currentWorkspaceIndex = null;
         this._lastVisitedWorkspace = null;
         
-        // Edge tiling state (primitives only)
         this._settingsOverrider = null;
         this._draggedWindow = null;
         this._dragMonitorId = null;
@@ -68,7 +50,6 @@ export default class WindowMosaicExtension extends Extension {
         this._grabOpEndId = null;
         this._currentGrabOp = null; // Track current grab operation
 
-        // Manager references (will be created in enable())
         this.edgeTilingManager = null;
         this.tilingManager = null;
         this.reorderingManager = null;
@@ -92,18 +73,13 @@ export default class WindowMosaicExtension extends Extension {
         let nWorkspaces = this._workspaceManager.get_n_workspaces();
         for(let i = 0; i < nWorkspaces; i++) {
             let workspace = this._workspaceManager.get_workspace_by_index(i);
-            // Recurse all monitors
             let nMonitors = global.display.get_n_monitors();
             for(let j = 0; j < nMonitors; j++)
                 this.tilingManager.tileWorkspaceWindows(workspace, false, j, true);
         }
     }
 
-    /**
-     * Handler called when a new window is created in the display.
-     */
     _windowCreatedHandler = (_, window) => {
-        // Track if window opens maximized
         if (this.windowingManager.isMaximizedOrFullscreen(window)) {
             if (!this._windowsOpenedMaximized) {
                 this._windowsOpenedMaximized = new Set();
@@ -117,20 +93,17 @@ export default class WindowMosaicExtension extends Extension {
             let monitor = window.get_monitor();
             let workspace = window.get_workspace();
                 
-            // Ensure window is valid before any action
             if( monitor !== null &&
                 window.wm_class !== null &&
                 window.get_compositor_private() &&
                 workspace.list_windows().length !== 0 &&
                 !window.is_hidden())
             {
-                // Check if window should be managed (includes blacklist check)
                 if(this.windowingManager.isExcluded(window)) {
                     Logger.log('[MOSAIC WM] Window excluded from tiling');
                     return GLib.SOURCE_REMOVE; 
                 }
                 
-                // CASE 1: Window is maximized/fullscreen AND there are other apps in workspace
                 if(this.windowingManager.isMaximizedOrFullscreen(window)) {
                     const workspaceWindows = this.windowingManager.getMonitorWorkspaceWindows(workspace, monitor);
                     
@@ -139,7 +112,6 @@ export default class WindowMosaicExtension extends Extension {
                         const openedMaximized = this._windowsOpenedMaximized && this._windowsOpenedMaximized.has(windowId);
                         
                         if (openedMaximized) {
-                            // Window OPENED maximized - check for tiled windows to auto-tile
                             Logger.log('[MOSAIC WM] Opened maximized with tiled window - auto-tiling');
                             
                             const workspaceWindows = this.windowingManager.getMonitorWorkspaceWindows(workspace, monitor);
@@ -170,7 +142,6 @@ export default class WindowMosaicExtension extends Extension {
                     }
                 }
                 
-                // CASE 2: Check if workspace has exactly one edge-tiled window
                 const workspaceWindows = this.windowingManager.getMonitorWorkspaceWindows(workspace, monitor);
                 const edgeTiledWindows = workspaceWindows.filter(w => {
                     const tileState = this.edgeTilingManager.getWindowState(w);
@@ -189,7 +160,6 @@ export default class WindowMosaicExtension extends Extension {
                     Logger.log('[MOSAIC WM] New window: Tiling failed, continuing with normal flow');
                 }
                 
-                // CASE 3: Check if window FITS in current workspace
                 const canFit = this.tilingManager.canFitWindow(window, workspace, monitor);
                 
                 if(!canFit) {
@@ -475,17 +445,14 @@ export default class WindowMosaicExtension extends Extension {
                 let canFit = this.tilingManager.canFitWindow(window, workspace, monitor);
                 
                 if (!canFit) {
-                    // Check if user is manually resizing by checking for active grab operation
                     const isManualResize = this._currentGrabOp && constants.RESIZE_GRAB_OPS.includes(this._currentGrabOp);
                     
                     if (this._resizeOverflowWindow !== window) {
                         this._resizeOverflowWindow = window;
                         
                         if (isManualResize) {
-                            // Manual resize: wait for user to release (grab-op-end will handle it)
                             Logger.log('[MOSAIC WM] Resize overflow detected during manual resize - will move on release');
                         } else {
-                            // Automatic resize: move immediately
                             Logger.log('[MOSAIC WM] Resize overflow detected (automatic) - moving window immediately');
                             
                             let oldWorkspace = workspace;
@@ -500,7 +467,6 @@ export default class WindowMosaicExtension extends Extension {
                         }
                     }
                     
-                    // If manual resize, continue with normal tiling (don't return)
                     if (!isManualResize) {
                         this._sizeChanged = false;
                         return;
@@ -519,7 +485,6 @@ export default class WindowMosaicExtension extends Extension {
     }
 
     _grabOpBeginHandler = (_, window, grabpo) => {
-        // Track current grab operation
         this._currentGrabOp = grabpo;
         
         const isResizeOp = constants.RESIZE_GRAB_OPS.includes(grabpo);
@@ -544,8 +509,6 @@ export default class WindowMosaicExtension extends Extension {
                     Logger.log(`[MOSAIC WM] Edge tiling: restoration complete, checking if drag still active`);
                     this._skipNextTiling = null;
                     
-                    // Check if the grab is still active before starting drag
-                    // The grab-op-end may have already fired during restoration animation
                     const [x, y, mods] = global.get_pointer();
                     const isButtonPressed = (mods & Clutter.ModifierType.BUTTON1_MASK) !== 0;
                     
@@ -664,7 +627,6 @@ export default class WindowMosaicExtension extends Extension {
     }
     
     _grabOpEndHandler = (_, window, grabpo) => {
-        // Clear current grab operation
         this._currentGrabOp = null;
         
         if (grabpo === constants.GRAB_OP_MOVING && window === this._draggedWindow) {
@@ -752,7 +714,6 @@ export default class WindowMosaicExtension extends Extension {
                     this.edgeTilingManager.fixQuarterPairSizes(window, tileState.zone);
                 }
                 
-                // Handle resize overflow for ALL resize operations
                 if (this._resizeOverflowWindow === window) {
                     Logger.log('[MOSAIC WM] Resize ended with overflow - moving window to new workspace');
                     let oldWorkspace = window.get_workspace();

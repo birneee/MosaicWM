@@ -1,53 +1,39 @@
-import * as Logger from './logger.js';
-/**
- * Animations Manager
- * 
- * Provides smooth animations for window movements and resizing.
- * Uses Clutter Actor ease() API for hardware-accelerated animations.
- */
+// Copyright 2025 Cleo Menezes Jr.
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Smooth window animations for mosaic tiling
 
+import * as Logger from './logger.js';
 import Clutter from 'gi://Clutter';
 import GLib from 'gi://GLib';
 import * as constants from './constants.js';
 
 // Animation configuration
 const ANIMATION_DURATION = constants.ANIMATION_DURATION_MS;
-const ANIMATION_MODE = Clutter.AnimationMode.EASE_OUT_BACK; // Momentum for re-tiling
-const ANIMATION_MODE_MOMENTUM = Clutter.AnimationMode.EASE_OUT_BACK; // Momentum for open/close
-const ANIMATION_MODE_SUBTLE = Clutter.AnimationMode.EASE_OUT_QUAD; // Subtle for edge tiling
+const ANIMATION_MODE = Clutter.AnimationMode.EASE_OUT_BACK;
+const ANIMATION_MODE_MOMENTUM = Clutter.AnimationMode.EASE_OUT_BACK;
+const ANIMATION_MODE_SUBTLE = Clutter.AnimationMode.EASE_OUT_QUAD;
 
 export class AnimationsManager {
     constructor() {
-        this._isDragging = false; // Track if user is dragging a window
-        this._animatingWindows = new Set(); // Track windows currently being animated
-        this._initialWindowPositions = new Map(); // Track initial positions for new windows
-        this._justEndedDrag = false; // Track if we just ended a drag (for smooth drop animation)
-        this._resizingWindowId = null; // Track window being resized
+        this._isDragging = false;
+        this._animatingWindows = new Set();
+        this._initialWindowPositions = new Map();
+        this._justEndedDrag = false;
+        this._resizingWindowId = null;
     }
 
-    /**
-     * Set which window is currently being resized
-     */
     setResizingWindow(windowId) {
         this._resizingWindowId = windowId;
     }
 
-    /**
-     * Get the ID of window currently being resized
-     */
     getResizingWindowId() {
         return this._resizingWindowId;
     }
 
-    /**
-     * Set dragging state
-     * Animations are disabled for the dragged window itself during drag
-     */
     setDragging(dragging) {
         // If ending drag, set flag for smooth drop animation
         if (this._isDragging && !dragging) {
             this._justEndedDrag = true;
-            // Clear flag after a short delay (enough for one animation)
             GLib.timeout_add(GLib.PRIORITY_DEFAULT, constants.DEBOUNCE_DELAY_MS, () => {
                 this._justEndedDrag = false;
                 return GLib.SOURCE_REMOVE;
@@ -56,9 +42,6 @@ export class AnimationsManager {
         this._isDragging = dragging;
     }
 
-    /**
-     * Save initial position of a newly added window
-     */
     saveInitialPosition(window) {
         const windowId = window.get_id();
         const rect = window.get_frame_rect();
@@ -70,9 +53,6 @@ export class AnimationsManager {
         });
     }
 
-    /**
-     * Get and clear initial position for a window
-     */
     getAndClearInitialPosition(window) {
         const windowId = window.get_id();
         const pos = this._initialWindowPositions.get(windowId);
@@ -82,24 +62,17 @@ export class AnimationsManager {
         return pos;
     }
 
-    /**
-     * Check if animations are allowed
-     */
     isAnimationAllowed() {
         // Always allow animations for other windows, just not the dragged one
         return true;
     }
 
-    /**
-     * Check if a specific window should be animated
-     */
     shouldAnimateWindow(window, draggedWindow = null) {
         // Don't animate the window being dragged
         if (draggedWindow && window.get_id() === draggedWindow.get_id()) {
             return false;
         }
         
-        // Don't animate if window is already being animated (prevent conflicts)
         if (this._animatingWindows.has(window.get_id())) {
             return false;
         }
@@ -112,9 +85,6 @@ export class AnimationsManager {
         return true;
     }
 
-    /**
-     * Animate a window to a target position and size
-     */
     animateWindow(window, targetRect, options = {}) {
         const {
             duration = ANIMATION_DURATION,
@@ -124,7 +94,6 @@ export class AnimationsManager {
             subtle = false
         } = options;
         
-        // Check if we should animate this window
         if (!this.shouldAnimateWindow(window, draggedWindow)) {
             // Apply position immediately without animation
             window.move_resize_frame(false, targetRect.x, targetRect.y, targetRect.width, targetRect.height);
@@ -140,11 +109,9 @@ export class AnimationsManager {
             return;
         }
         
-        // Mark window as animating
         const windowId = window.get_id();
         this._animatingWindows.add(windowId);
         
-        // Get current frame rect for animation
         const currentRect = window.get_frame_rect();
         
         // Choose animation mode based on context
@@ -221,9 +188,6 @@ export class AnimationsManager {
         });
     }
 
-    /**
-     * Animate window opening
-     */
     animateWindowOpen(window, targetRect) {
         const windowActor = window.get_compositor_private();
         if (!windowActor) {
@@ -254,9 +218,6 @@ export class AnimationsManager {
         });
     }
 
-    /**
-     * Animate window closing
-     */
     animateWindowClose(window, onComplete) {
         const windowActor = window.get_compositor_private();
         if (!windowActor) {
@@ -282,9 +243,6 @@ export class AnimationsManager {
         });
     }
 
-    /**
-     * Animate a window moving from point A to point B
-     */
     animateWindowMove(window, fromRect, toRect, options = {}) {
         const {
             duration = ANIMATION_DURATION,
@@ -320,9 +278,6 @@ export class AnimationsManager {
         });
     }
 
-    /**
-     * Animate multiple windows to new layout
-     */
     animateReTiling(windowLayouts, draggedWindow = null) {
         if (windowLayouts.length === 1) {
             const { window, rect } = windowLayouts[0];
@@ -344,21 +299,11 @@ export class AnimationsManager {
         }
     }
 
-    /**
-     * Cleanup function
-     */
     cleanup() {
         this._animatingWindows.clear();
         this._isDragging = false;
     }
 
-    destroy() {
-        this.cleanup();
-    }
-
-    /**
-     * Cleanup and destroy manager
-     */
     destroy() {
         this.cleanup();
     }

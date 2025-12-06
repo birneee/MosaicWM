@@ -1,20 +1,13 @@
-import * as Logger from './logger.js';
-/**
- * Windowing Manager
- * 
- * This module handles window management operations including:
- * - Moving windows between workspaces
- * - Checking window states and properties
- * - Workspace navigation
- * - Window filtering and exclusion logic
- */
+// Copyright 2025 Cleo Menezes Jr.
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Window management utilities and workspace operations
 
+import * as Logger from './logger.js';
 import Meta from 'gi://Meta';
 import GLib from 'gi://GLib';
 
 import { TileZone } from './edgeTiling.js';
 
-// List of excluded WM classes
 const BLACKLISTED_WM_CLASSES = [
     'org.gnome.Screenshot',
     'Gnome-screenshot',
@@ -26,64 +19,30 @@ export class WindowingManager {
         this._animationsManager = null;
     }
 
-    /**
-     * Sets the EdgeTilingManager dependency.
-     * @param {EdgeTilingManager} manager
-     */
     setEdgeTilingManager(manager) {
         this._edgeTilingManager = manager;
     }
 
-    /**
-     * Sets the AnimationsManager dependency.
-     * @param {AnimationsManager} manager
-     */
     setAnimationsManager(manager) {
         this._animationsManager = manager;
     }
 
-    /**
-     * Gets the current timestamp from GNOME Shell.
-     * @returns {number} Current timestamp in milliseconds
-     */
     getTimestamp() {
         return global.get_current_time();
     }
 
-    /**
-     * Gets the index of the primary monitor.
-     * @returns {number} Primary monitor index
-     */
     getPrimaryMonitor() {
         return global.display.getPrimaryMonitor();
     }
 
-    /**
-     * Gets the currently active workspace.
-     * @returns {Meta.Workspace} The active workspace
-     */
     getWorkspace() {
         return global.workspace_manager.get_active_workspace();
     }
 
-    /**
-     * Gets all windows in the active workspace for a specific monitor.
-     * @param {number} monitor Monitor index
-     * @param {boolean} allow_unrelated Include non-tileable windows
-     * @returns {Meta.Window[]} Array of windows
-     */
     getAllWorkspaceWindows(monitor, allow_unrelated) {
         return this.getMonitorWorkspaceWindows(this.getWorkspace(), monitor, allow_unrelated);
     }
 
-    /**
-     * Gets all windows in a specific workspace and monitor.
-     * Filters windows by monitor and optionally by whether they're "related" (normal windows).
-     * @param {Meta.Workspace} workspace The workspace to query
-     * @param {number} monitor Monitor index
-     * @param {boolean} allow_unrelated Include non-tileable windows
-     * @returns {Meta.Window[]} Array of windows
-     */
     getMonitorWorkspaceWindows(workspace, monitor, allow_unrelated) {
         let _windows = [];
         if (!workspace) return _windows;
@@ -95,11 +54,6 @@ export class WindowingManager {
         return _windows;
     }
 
-    /**
-     * Moves a window back to the previous workspace.
-     * @param {Meta.Window} window The window to move
-     * @returns {Meta.Workspace|undefined} The previous workspace or undefined
-     */
     moveBackWindow(window) {
         let workspace = window.get_workspace();
         let active = workspace.active;
@@ -130,7 +84,6 @@ export class WindowingManager {
             return false;
         }
         
-        // Get the edge tiling state of the existing window
         const workspace = window.get_workspace();
         const monitor = window.get_monitor();
         const workArea = workspace.get_work_area_for_monitor(monitor);
@@ -142,7 +95,6 @@ export class WindowingManager {
             return false;
         }
         
-        // Determine opposite side for tiling based on edge tiling zone
         let direction;
         if (tileState.zone === TileZone.LEFT_FULL ||
             tileState.zone === TileZone.TOP_LEFT ||
@@ -219,7 +171,6 @@ export class WindowingManager {
         let target_workspace = null;
         let strategy = null;
         
-        // Strategy: Create new workspace to the right
         target_workspace = workspaceManager.append_new_workspace(false, this.getTimestamp());
         
         const newWorkspace = target_workspace;
@@ -254,20 +205,10 @@ export class WindowingManager {
         return target_workspace;
     }
 
-    /**
-     * Checks if a window is on the primary monitor.
-     * @param {Meta.Window} window The window to check
-     * @returns {boolean} True if on primary monitor
-     */
     isPrimary(window) {
         return window.get_monitor() === this.getPrimaryMonitor();
     }
 
-    /**
-     * Checks if a window should be excluded from tiling.
-     * @param {Meta.Window} meta_window The window to check
-     * @returns {boolean} True if window should be excluded
-     */
     isExcluded(meta_window) {
         if (!this.isRelated(meta_window) || meta_window.minimized) {
             return true;
@@ -282,11 +223,6 @@ export class WindowingManager {
         return false;
     }
 
-    /**
-     * Checks if a window is a "related" window that should be tiled.
-     * @param {Meta.Window} meta_window The window to check
-     * @returns {boolean} True if window is related
-     */
     isRelated(meta_window) {
         if (meta_window.is_attached_dialog()) {
             return false;
@@ -309,11 +245,6 @@ export class WindowingManager {
         return true;
     }
 
-    /**
-     * Checks if a window is maximized or in fullscreen mode.
-     * @param {Meta.Window} window The window to check
-     * @returns {boolean} True if maximized or fullscreen
-     */
     isMaximizedOrFullscreen(window) {
         return (window.maximized_horizontally === true && 
                 window.maximized_vertically === true) || 
@@ -342,9 +273,6 @@ export class WindowingManager {
         }
     }
 
-    /**
-     * Cleanup method called when extension is disabled.
-     */
     destroy() {
         this._edgeTilingManager = null;
         this._animationsManager = null;

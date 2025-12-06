@@ -1,10 +1,8 @@
-import * as Logger from './logger.js';
-/**
- * Swapping Manager
- * 
- * Provides unified window swapping functionality across mosaic and tiling zones.
- */
+// Copyright 2025 Cleo Menezes Jr.
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Window position swapping with keyboard shortcuts
 
+import * as Logger from './logger.js';
 import { TileZone } from './edgeTiling.js';
 
 
@@ -22,9 +20,6 @@ export class SwappingManager {
         this._edgeTilingManager = manager;
     }
 
-    /**
-     * Find the window's neighbor in a given direction
-     */
     findNeighbor(window, direction, workspace, monitor) {
         if (!this._edgeTilingManager) return null;
         
@@ -397,9 +392,6 @@ export class SwappingManager {
         return true;
     }
 
-    /**
-     * Cleanup and destroy manager
-     */
     destroy() {
         this._tilingManager = null;
         this._edgeTilingManager = null;
