@@ -8,8 +8,8 @@
  * - Window filtering and exclusion logic
  */
 
-
 import Meta from 'gi://Meta';
+import GLib from 'gi://GLib';
 import * as edgeTiling from './edgeTiling.js';
 import * as tiling from './tiling.js';
 
@@ -236,16 +236,61 @@ export function tryTileWithSnappedWindow(window, edgeTiledWindow, previousWorksp
 export function moveOversizedWindow(window) {
     let previous_workspace = window.get_workspace();
     let monitor = window.get_monitor();
-    let new_workspace = global.workspace_manager.append_new_workspace(false, getTimestamp());
+    const workspaceManager = global.workspace_manager;
+    const currentIndex = previous_workspace.index();
+    const nWorkspaces = workspaceManager.get_n_workspaces();
+    
+    let target_workspace = null;
+    let strategy = null;
+    
+    // PRIORITY 1: Try next workspace (to the right) if it exists
+    const nextIndex = currentIndex + 1;
+    if (nextIndex < nWorkspaces) {
+        const nextWorkspace = workspaceManager.get_workspace_by_index(nextIndex);
+        if (tiling.canFitWindow(window, nextWorkspace, monitor)) {
+            target_workspace = nextWorkspace;
+            strategy = `next workspace ${nextIndex} (has space)`;
+            console.log(`[MOSAIC WM] Found space in next workspace ${nextIndex}`);
+        }
+    }
+    
+    // PRIORITY 2: Check if next workspace is GNOME's empty workspace
+    if (!target_workspace && nextIndex === nWorkspaces - 1) {
+        const lastWorkspace = workspaceManager.get_workspace_by_index(nextIndex);
+        const lastWindows = getMonitorWorkspaceWindows(lastWorkspace, monitor);
+        const lastManagedWindows = lastWindows.filter(w => !isExcluded(w));
+        
+        if (lastManagedWindows.length === 0) {
+            target_workspace = lastWorkspace;
+            strategy = `GNOME's empty workspace ${nextIndex}`;
+            console.log(`[MOSAIC WM] Using GNOME's empty workspace ${nextIndex}`);
+        }
+    }
+    
+    // PRIORITY 3: Create new workspace to the right of current
+    if (!target_workspace) {
+        target_workspace = workspaceManager.append_new_workspace(false, getTimestamp());
+        
+        // Use idle_add to let GNOME Shell finish creating the workspace before reordering
+        // This avoids race conditions with workspace animations
+        const newWorkspace = target_workspace;
+        const insertPosition = currentIndex + 1;
+        GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+            workspaceManager.reorder_workspace(newWorkspace, insertPosition);
+            return GLib.SOURCE_REMOVE;
+        });
+        
+        strategy = `new workspace at position ${insertPosition}`;
+        console.log(`[MOSAIC WM] Created new workspace at position ${insertPosition}`);
+    }
 
-    console.log(`[MOSAIC WM] Moving overflow window ${window.get_id()} from workspace ${previous_workspace.index()} to ${new_workspace.index()}`);
+    console.log(`[MOSAIC WM] Moving overflow window ${window.get_id()} from workspace ${currentIndex} to ${target_workspace.index()} (strategy: ${strategy})`);
 
     // Capture starting position before moving
     const startRect = window.get_frame_rect();
 
-    // Move window to new workspace
-    window.change_workspace(new_workspace);
-    global.workspace_manager.reorder_workspace(new_workspace, previous_workspace.index() + 1);
+    // Move window to target workspace
+    window.change_workspace(target_workspace);
 
     // RE-TILE PREVIOUS WORKSPACE
     // This fixes the bug where the previous workspace layout was left broken
@@ -255,7 +300,7 @@ export function moveOversizedWindow(window) {
 
     let switchFocusToMovedWindow = previous_workspace.active;
     if (switchFocusToMovedWindow) {
-        new_workspace.activate(getTimestamp());
+        target_workspace.activate(getTimestamp());
     }
     
     // ANIMATE A→B: Window moving from old position to new workspace position
@@ -268,7 +313,7 @@ export function moveOversizedWindow(window) {
         });
     });
 
-    return new_workspace;
+    return target_workspace;
 }
 
 /**
