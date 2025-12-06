@@ -1,3 +1,4 @@
+import * as Logger from './logger.js';
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 
@@ -6,10 +7,14 @@ import GLib from 'gi://GLib';
  * 
  * Pattern from Tiling Assistant extension - saves original values and
  * restores them when the extension is disabled.
+ * 
+ * Uses private class fields (#) for encapsulation (Modern JS).
  */
 export class SettingsOverrider {
+    #overrides;
+
     constructor() {
-        this._overrides = new Map();
+        this.#overrides = new Map();
     }
     
     /**
@@ -21,11 +26,11 @@ export class SettingsOverrider {
     add(settings, key, value) {
         const schemaId = settings.schema_id;
         
-        if (!this._overrides.has(schemaId)) {
-            this._overrides.set(schemaId, new Map());
+        if (!this.#overrides.has(schemaId)) {
+            this.#overrides.set(schemaId, new Map());
         }
         
-        const schemaOverrides = this._overrides.get(schemaId);
+        const schemaOverrides = this.#overrides.get(schemaId);
         
         // Save original value if not already saved
         if (!schemaOverrides.has(key)) {
@@ -35,24 +40,26 @@ export class SettingsOverrider {
         
         // Apply override
         settings.set_value(key, value);
-        console.log(`[MOSAIC WM] Overriding ${schemaId}.${key}`);
+        Logger.log(`[MOSAIC WM] Overriding ${schemaId}.${key}`);
     }
     
     /**
      * Restore all overridden settings to their original values
      */
     clear() {
+        if (!this.#overrides) return;
+
         // Restore all original values
-        for (const [schemaId, overrides] of this._overrides) {
+        for (const [schemaId, overrides] of this.#overrides) {
             const settings = new Gio.Settings({ schema_id: schemaId });
             
             for (const [key, originalValue] of overrides) {
                 settings.set_value(key, originalValue);
-                console.log(`[MOSAIC WM] Restored ${schemaId}.${key}`);
+                Logger.log(`[MOSAIC WM] Restored ${schemaId}.${key}`);
             }
         }
         
-        this._overrides.clear();
+        this.#overrides.clear();
     }
     
     /**
@@ -60,6 +67,6 @@ export class SettingsOverrider {
      */
     destroy() {
         this.clear();
-        this._overrides = null;
+        this.#overrides = null;
     }
 }
