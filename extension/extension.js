@@ -22,6 +22,7 @@ import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
 import Shell from 'gi://Shell';
+import Clutter from 'gi://Clutter';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as windowing from './windowing.js';
 import * as tiling from './tiling.js';
@@ -665,13 +666,53 @@ export default class WindowMosaicExtension extends Extension {
                 return;
             }
             
+            // Stop any existing polling loop before starting a new one
+            // This prevents orphaned loops when re-grabbing during animation
+            if (this._edgeTilingPollId) {
+                console.log(`[MOSAIC WM] Stopping previous polling loop before starting new one`);
+                GLib.source_remove(this._edgeTilingPollId);
+                this._edgeTilingPollId = null;
+            }
+            
             // Poll cursor position to detect edge tiling zones
             this._edgeTilingPollId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
                 if (!this._draggedWindow) {
                     return GLib.SOURCE_REMOVE;
                 }
                 
-                const [x, y] = global.get_pointer();
+                // Safety check: detect if drag ended without grab-op-end event
+                // Check if mouse button is still pressed
+                const [x, y, mods] = global.get_pointer();
+                const isButtonPressed = (mods & Clutter.ModifierType.BUTTON1_MASK) !== 0;
+                
+                if (!isButtonPressed) {
+                    console.warn(`[MOSAIC WM] Drag ended without grab-op-end event - forcing cleanup`);
+                    
+                    // Apply tile if in zone
+                    if (this._currentZone !== edgeTiling.TileZone.NONE) {
+                        const workspace = this._draggedWindow.get_workspace();
+                        const monitor = this._draggedWindow.get_monitor();
+                        const workArea = workspace.get_work_area_for_monitor(monitor);
+                        
+                        console.log(`[MOSAIC WM] Applying zone ${this._currentZone} on forced cleanup`);
+                        edgeTiling.applyTile(this._draggedWindow, this._currentZone, workArea);
+                    }
+                    
+                    // Force cleanup
+                    drawing.hideTilePreview();
+                    tiling.clearDragRemainingSpace();
+                    edgeTiling.setEdgeTilingActive(false, null);
+                    
+                    const draggedWindow = this._draggedWindow;
+                    this._draggedWindow = null;
+                    this._currentZone = edgeTiling.TileZone.NONE;
+                    
+                    // Stop mosaic drag
+                    reordering.stopDrag(draggedWindow, false, true);
+                    
+                    return GLib.SOURCE_REMOVE;
+                }
+                
                 const monitor = this._draggedWindow.get_monitor();
                 const workspace = this._draggedWindow.get_workspace();
                 const workArea = workspace.get_work_area_for_monitor(monitor);
