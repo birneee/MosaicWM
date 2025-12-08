@@ -90,15 +90,9 @@ export class TilingManager {
     applyTmpSwap(workspace) {
         if(!workspace.swaps)
             workspace.swaps = [];
-        if(this.tmp_swap.length !== 0) {
-            // Replace instead of accumulate to avoid conflicting swaps
-            // Find and remove any existing swap involving these windows
-            const [id1, id2] = this.tmp_swap;
-            workspace.swaps = workspace.swaps.filter(s => 
-                !(s[0] === id1 || s[1] === id1 || s[0] === id2 || s[1] === id2)
-            );
+        
+        if(this.tmp_swap.length !== 0)
             workspace.swaps.push(this.tmp_swap);
-        }
     }
 
     applySwaps(workspace, array) {
@@ -334,7 +328,7 @@ export class TilingManager {
             xPos += level.width + spacing;
         }
         
-        Logger.log(`[MOSAIC WM] verticalShelves: ${windows.length} windows -> ${levels.length} cols, totalW=${totalWidth}, workH=${work_area.height}`);
+
         
         return {
             x: startX,
@@ -588,13 +582,13 @@ export class TilingManager {
                     }
                 }
                 
-                if (currentRowWidth > work_area.width) overflow = true;
+                if (currentRowWidth > work_area.width + 5) overflow = true;
                 maxRowWidth = Math.max(maxRowWidth, currentRowWidth);
                 
                 totalHeight += currentRowHeight + (r > 0 ? spacing : 0);
             }
             
-            if (totalHeight > work_area.height) overflow = true;
+            if (totalHeight > work_area.height + 5) overflow = true;
             
             // Calculate score (Aspect ratio + Empty spaces)
             const layoutWidth = maxRowWidth;
@@ -719,7 +713,7 @@ export class TilingManager {
     }
 
     _animateTileLayout(tile_info, work_area, meta_windows, draggedWindow = null) {
-        Logger.log(`[MOSAIC WM] animateTileLayout called: ${meta_windows.length} windows`);
+
         
         if (this._animationsManager) {
             const resizingWindowId = this._animationsManager.getResizingWindowId();

@@ -86,10 +86,10 @@ export class ReorderingManager {
 
         if(target_id === id || target_id === null) {
             this._tilingManager.clearTmpSwap();
-            Logger.log('[MOSAIC WM] Drag: No swap (cursor not over another window)');
+
         } else {
             this._tilingManager.setTmpSwap(id, target_id);
-            Logger.log(`[MOSAIC WM] Drag: Setting swap ${id} <-> ${target_id}`);
+
         }
 
         let isOverEdgeZone = false;
