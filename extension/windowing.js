@@ -183,6 +183,13 @@ export class WindowingManager {
         Logger.log(`[MOSAIC WM] Moving overflow window ${window.get_id()} from workspace ${currentIndex} to ${target_workspace.index()} (strategy: ${strategy})`);
         
         GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+            // Defensive check: verify workspace is valid before any operations
+            const workspaceIndex = newWorkspace.index();
+            if (workspaceIndex < 0 || workspaceIndex >= workspaceManager.get_n_workspaces()) {
+                Logger.warn(`[MOSAIC WM] Aborting window move: invalid workspace index ${workspaceIndex}`);
+                return GLib.SOURCE_REMOVE;
+            }
+            
             workspaceManager.reorder_workspace(newWorkspace, insertPosition);
             window.change_workspace(newWorkspace);
             

@@ -175,13 +175,22 @@ export class TilingManager {
         
         // Check if any window is taller than 50% of workspace height
         let maxHeight = 0;
+        let maxWidth = 0;
         for (const w of windows) {
             maxHeight = Math.max(maxHeight, w.height);
+            maxWidth = Math.max(maxWidth, w.width);
         }
         
-        const useVerticalShelves = maxHeight > work_area.height * 0.65;
+        // Use vertical shelves (stacking windows one above another) when:
+        // 1. Any window is taller than 65% of workspace height, OR
+        // 2. Workspace is narrow (width < height) - e.g., edge tiling half-screen, OR
+        // 3. Widest window exceeds available width (force vertical stacking)
+        const isNarrowWorkspace = work_area.width < work_area.height;
+        const windowTooWide = maxWidth > work_area.width * 0.9;
+        const windowTooTall = maxHeight > work_area.height * 0.65;
+        const useVerticalShelves = windowTooTall || isNarrowWorkspace || windowTooWide;
         
-        Logger.log(`[MOSAIC WM] _tile: ${windows.length} windows, workArea=${work_area.width}x${work_area.height}, maxWinH=${maxHeight}, threshold=${Math.round(work_area.height * 0.65)}, useVertical=${useVerticalShelves}`);
+        Logger.log(`[MOSAIC WM] _tile: ${windows.length} windows, workArea=${work_area.width}x${work_area.height}, maxWinH=${maxHeight}, maxWinW=${maxWidth}, narrow=${isNarrowWorkspace}, tooWide=${windowTooWide}, useVertical=${useVerticalShelves}`);
         
         if (useVerticalShelves) {
             return this._verticalShelves(windows, work_area, spacing);

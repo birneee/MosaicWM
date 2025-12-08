@@ -779,6 +779,7 @@ export class EdgeTilingManager {
                 });
             }
             
+            // Handle mosaic windows that can't fit in remaining space
             if (!skipOverflowCheck) {
                 this._handleMosaicOverflow(window, zone);
             }
@@ -877,10 +878,43 @@ export class EdgeTilingManager {
         const workspace = tiledWindow.get_workspace();
         const monitor = tiledWindow.get_monitor();
         const workArea = workspace.get_work_area_for_monitor(monitor);
-        const remainingSpace = this.calculateRemainingSpace(workspace, monitor);
+        
+        // Check if BOTH sides are now edge-tiled (including the window just tiled)
+        const edgeTiledWindows = this.getEdgeTiledWindows(workspace, monitor);
+        const zones = edgeTiledWindows.map(w => w.zone);
+        
+        const hasLeft = zones.includes(TileZone.LEFT_FULL) || 
+                        zones.some(z => z === TileZone.TOP_LEFT || z === TileZone.BOTTOM_LEFT);
+        const hasRight = zones.includes(TileZone.RIGHT_FULL) || 
+                         zones.some(z => z === TileZone.TOP_RIGHT || z === TileZone.BOTTOM_RIGHT);
+        
         const mosaicWindows = this.getNonEdgeTiledWindows(workspace, monitor);
         
         if (mosaicWindows.length === 0) return;
+        
+        // If both sides are occupied, move ALL mosaic windows to new workspace
+        if (hasLeft && hasRight) {
+            Logger.log(`[MOSAIC WM] Both sides edge-tiled - moving ${mosaicWindows.length} mosaic windows to new workspace`);
+            const workspaceManager = global.workspace_manager;
+            const newWorkspace = workspaceManager.append_new_workspace(false, global.get_current_time());
+            
+            for (const mosaicWindow of mosaicWindows) {
+                mosaicWindow.change_workspace(newWorkspace);
+            }
+            
+            GLib.timeout_add(GLib.PRIORITY_DEFAULT, 200, () => {
+                if (this._tilingManager) {
+                    this._tilingManager.tileWorkspaceWindows(workspace, null, monitor);
+                }
+                return GLib.SOURCE_REMOVE;
+            });
+            
+            newWorkspace.activate(global.get_current_time());
+            return;
+        }
+        
+        // Single edge tile - check if we should auto-tile the single mosaic window
+        const remainingSpace = this.calculateRemainingSpace(workspace, monitor);
         
         if (mosaicWindows.length === 1) {
             const mosaicWindow = mosaicWindows[0];
@@ -903,6 +937,7 @@ export class EdgeTilingManager {
             }
         }
         
+        // Check if mosaic windows overflow remaining space
         let totalMosaicArea = 0;
         for (const w of mosaicWindows) {
             const frame = w.get_frame_rect();
