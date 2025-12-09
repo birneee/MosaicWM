@@ -1053,6 +1053,14 @@ export class TilingManager {
         return fits;
     }
 
+    destroy() {
+        this.destroyMasks();
+        this._edgeTilingManager = null;
+        this._drawingManager = null;
+        this._animationsManager = null;
+        this._windowingManager = null;
+    }
+
 }
 
 class WindowDescriptor {

@@ -100,4 +100,8 @@ export class DrawingManager {
         }
         this._edgeTilingManager = null;
     }
+
+    destroy() {
+        this.clearActors();
+    }
 }
