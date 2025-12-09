@@ -830,10 +830,18 @@ export class EdgeTilingManager {
         const savedX = savedState.x;
         const savedY = savedState.y;
         
+        Logger.log(`[MOSAIC WM] removeTile: Checking dependencies for master=${winId}, total dependencies=${this._autoTiledDependencies.size}`);
         this._autoTiledDependencies.forEach((masterId, dependentId) => {
+            Logger.log(`[MOSAIC WM] removeTile: Dependency: dependent=${dependentId} -> master=${masterId}`);
             if (masterId === winId) {
+                Logger.log(`[MOSAIC WM] removeTile: Found dependent ${dependentId} of master ${winId}, removing...`);
                 const dependent = this._findWindowById(dependentId);
-                if (dependent) this.removeTile(dependent);
+                if (dependent) {
+                    Logger.log(`[MOSAIC WM] removeTile: Calling removeTile on dependent ${dependentId}`);
+                    this.removeTile(dependent);
+                } else {
+                    Logger.log(`[MOSAIC WM] removeTile: Could not find window for dependent ${dependentId}`);
+                }
                 this._autoTiledDependencies.delete(dependentId);
             }
         });
@@ -867,15 +875,40 @@ export class EdgeTilingManager {
             window.unmaximize();
         }
         
+        const workspace = window.get_workspace();
+        const monitor = window.get_monitor();
+        
+        // Calculate remaining mosaic space after edge tiles
+        const remainingSpace = this.calculateRemainingSpace(workspace, monitor);
+        
+        // Check if saved size fits in remaining space, resize if needed
+        let finalWidth = savedWidth;
+        let finalHeight = savedHeight;
+        
+        if (remainingSpace.width > 0 && remainingSpace.height > 0) {
+            // Leave some margin (80% of available space max)
+            const maxWidth = Math.floor(remainingSpace.width * 0.85);
+            const maxHeight = Math.floor(remainingSpace.height * 0.85);
+            
+            if (savedWidth > maxWidth || savedHeight > maxHeight) {
+                // Scale down proportionally while maintaining aspect ratio
+                const widthRatio = maxWidth / savedWidth;
+                const heightRatio = maxHeight / savedHeight;
+                const scale = Math.min(widthRatio, heightRatio, 1);
+                
+                finalWidth = Math.floor(savedWidth * scale);
+                finalHeight = Math.floor(savedHeight * scale);
+                Logger.log(`[MOSAIC WM] removeTile: Window ${winId} resized to fit: ${savedWidth}x${savedHeight} -> ${finalWidth}x${finalHeight}`);
+            }
+        }
+        
         const [cursorX, cursorY] = global.get_pointer();
-        const restoredX = cursorX - (savedWidth / 2);
+        const restoredX = cursorX - (finalWidth / 2);
         const restoredY = cursorY - 20;
         
-        Logger.log(`[MOSAIC WM] removeTile: Restoring window ${winId} to size ${savedWidth}x${savedHeight} at cursor (${restoredX}, ${restoredY})`);
-        window.move_resize_frame(false, restoredX, restoredY, savedWidth, savedHeight);
+        Logger.log(`[MOSAIC WM] removeTile: Restoring window ${winId} to size ${finalWidth}x${finalHeight} at cursor (${restoredX}, ${restoredY})`);
+        window.move_resize_frame(false, restoredX, restoredY, finalWidth, finalHeight);
         
-        // Mark this window as "coming from edge tile" - overflow will be checked on grab-op-end
-        // The window will participate in drag and overflow will be handled when released
         if (callback) {
             GLib.timeout_add(GLib.PRIORITY_DEFAULT, constants.RETILE_DELAY_MS, () => {
                 callback();
