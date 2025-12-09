@@ -32,6 +32,9 @@ This aligns with GNOME's philosophy of reducing cognitive load and letting users
 
 ### From Source
 
+> [!NOTE]
+> Requires `zip` command to be installed on your system.
+
 ```bash
 # Clone the repository
 git clone https://github.com/CleoMenezesJr/MosaicWM.git
