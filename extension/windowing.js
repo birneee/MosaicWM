@@ -182,16 +182,19 @@ export class WindowingManager {
         Logger.log(`[MOSAIC WM] Created new workspace at position ${insertPosition}`);
         Logger.log(`[MOSAIC WM] Moving overflow window ${window.get_id()} from workspace ${currentIndex} to ${target_workspace.index()} (strategy: ${strategy})`);
         
-        GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
-            // Defensive check: verify workspace is valid before any operations
+        // Move window immediately to avoid race conditions
+        window.change_workspace(newWorkspace);
+        
+        // Defer workspace reorder and activation
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
+            // Verify workspace still exists
             const workspaceIndex = newWorkspace.index();
             if (workspaceIndex < 0 || workspaceIndex >= workspaceManager.get_n_workspaces()) {
-                Logger.warn(`[MOSAIC WM] Aborting window move: invalid workspace index ${workspaceIndex}`);
+                Logger.warn(`[MOSAIC WM] Workspace no longer valid: ${workspaceIndex}`);
                 return GLib.SOURCE_REMOVE;
             }
             
             workspaceManager.reorder_workspace(newWorkspace, insertPosition);
-            window.change_workspace(newWorkspace);
             
             if (switchFocusToMovedWindow) {
                 newWorkspace.activate(global.get_current_time());

@@ -76,6 +76,14 @@ export class TilingManager {
     clearDragRemainingSpace() {
         this.dragRemainingSpace = null;
     }
+    
+    setExcludedWindow(window) {
+        this._excludedWindow = window;
+    }
+    
+    clearExcludedWindow() {
+        this._excludedWindow = null;
+    }
 
     setTmpSwap(id1, id2) {
         if (id1 === id2 || (this.tmp_swap[0] === id2 && this.tmp_swap[1] === id1))
@@ -664,6 +672,12 @@ export class TilingManager {
             meta_windows = meta_windows.filter(w => w.get_id() !== draggedId);
         }
         
+        // Exclude window marked as overflow (won't fit in mosaic)
+        if (this._excludedWindow) {
+            const excludedId = this._excludedWindow.get_id();
+            meta_windows = meta_windows.filter(w => w.get_id() !== excludedId);
+        }
+        
         let edgeTiledWindows = [];
         if (this._edgeTilingManager) {
             edgeTiledWindows = this._edgeTilingManager.getEdgeTiledWindows(workspace, current_monitor);
@@ -820,13 +834,22 @@ export class TilingManager {
             
             // Check if we have 2 half-tiles (left + right = fully occupied)
             const zones = edgeTiledWindows.map(w => w.zone);
+            Logger.log(`[MOSAIC WM] Edge tile zones detected: [${zones.join(', ')}]`);
             const hasLeftFull = zones.includes(TileZone.LEFT_FULL);
             const hasRightFull = zones.includes(TileZone.RIGHT_FULL);
             const hasLeftQuarters = zones.some(z => z === TileZone.TOP_LEFT || z === TileZone.BOTTOM_LEFT);
             const hasRightQuarters = zones.some(z => z === TileZone.TOP_RIGHT || z === TileZone.BOTTOM_RIGHT);
             
+            Logger.log(`[MOSAIC WM] Zone check: leftFull=${hasLeftFull}, rightFull=${hasRightFull}, leftQuarters=${hasLeftQuarters}, rightQuarters=${hasRightQuarters}`);
+            
             if ((hasLeftFull || hasLeftQuarters) && (hasRightFull || hasRightQuarters)) {
-                Logger.log('[MOSAIC WM] Both sides edge-tiled - workspace fully occupied');
+                // Don't move windows during drag - just show preview
+                if (this.isDragging) {
+                    Logger.log('[MOSAIC WM] Both sides edge-tiled - deferring overflow until drag ends');
+                    return; // Let preview show but don't move windows
+                }
+                
+                Logger.log('[MOSAIC WM] Both sides edge-tiled - workspace fully occupied, moving mosaic windows');
                 
                 const nonEdgeTiledMeta = this._edgeTilingManager.getNonEdgeTiledWindows(workspace, monitor);
                 
@@ -881,7 +904,16 @@ export class TilingManager {
                     overflow = true;
         }
 
-        if(overflow && !keep_oversized_windows && reference_meta_window) {
+        // Don't expel windows when edge-tiled windows exist (reduced space is intentional)
+        // EXCEPTION: if reference_meta_window itself is NOT edge-tiled, allow overflow for it
+        // The "both sides" case is handled above with explicit workspace move
+        // Also don't expel during drag - wait for confirmation
+        const hasEdgeTiledWindows = edgeTiledWindows && edgeTiledWindows.length > 0;
+        const referenceIsEdgeTiled = reference_meta_window && 
+            edgeTiledWindows?.some(s => s.window.get_id() === reference_meta_window.get_id());
+        const canOverflow = !hasEdgeTiledWindows || !referenceIsEdgeTiled;
+        
+        if(overflow && !keep_oversized_windows && reference_meta_window && canOverflow && !this.isDragging) {
             let id = reference_meta_window.get_id();
             let _windows = windows;
             for(let i = 0; i < _windows.length; i++) {
@@ -1121,7 +1153,6 @@ class Mask {
         this.height = window.height;
     }
     draw(_, x, y, _masks, _isDragging, drawingManager) {
-        Logger.log(`[MOSAIC WM] Mask.draw called: x=${x}, y=${y}, w=${this.width}, h=${this.height}`);
         if (drawingManager) {
             drawingManager.removeBoxes();
             drawingManager.rect(x, y, this.width, this.height);
