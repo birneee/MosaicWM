@@ -915,7 +915,8 @@ export default class WindowMosaicExtension extends Extension {
                 const timeSinceRemoved = removedTimestamp ? Date.now() - removedTimestamp : Infinity;
                 const isManualMove = this._manualWorkspaceMove.get(WINDOW.get_id());
                 
-                Logger.log(`[MOSAIC WM] window-added debug: window=${WINDOW.get_id()}, timeSince=${timeSinceRemoved}ms, prevWS=${previousWorkspaceIndex}, currentWS=${WORKSPACE.index()}, isManual=${isManualMove}`);
+                const workArea = WORKSPACE.get_work_area_for_monitor(MONITOR);
+                Logger.log(`[MOSAIC WM] window-added: window=${WINDOW.get_id()}, size=${frame.width}x${frame.height}, workArea=${workArea.width}x${workArea.height}, timeSince=${timeSinceRemoved}ms, prevWS=${previousWorkspaceIndex}, currentWS=${WORKSPACE.index()}, isManual=${isManualMove}`);
                 
                 if (previousWorkspaceIndex !== undefined && previousWorkspaceIndex !== WORKSPACE.index() && timeSinceRemoved < 100) {
                     Logger.log(`[MOSAIC WM] window-added: Overview drag-drop - window ${WINDOW.get_id()} from workspace ${previousWorkspaceIndex} to ${WORKSPACE.index()}`);
@@ -974,7 +975,8 @@ export default class WindowMosaicExtension extends Extension {
                 const waitForGeometry = () => {
                     const rect = WINDOW.get_frame_rect();
                     if (rect.width > 0 && rect.height > 0) {
-                        Logger.log(`[MOSAIC WM] Window ${WINDOW.get_id()} has geometry ${rect.width}x${rect.height}, tiling with animation`);
+                        const wa = WORKSPACE.get_work_area_for_monitor(MONITOR);
+                        Logger.log(`[MOSAIC WM] Window ${WINDOW.get_id()} ready: size=${rect.width}x${rect.height}, workArea=${wa.width}x${wa.height}`);
                         this.tilingManager.tileWorkspaceWindows(WORKSPACE, null, MONITOR, true);
                         return GLib.SOURCE_REMOVE;
                     }
