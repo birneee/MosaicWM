@@ -965,16 +965,15 @@ export class EdgeTilingManager {
         }
         
         // Single edge tile - check if we should auto-tile the single mosaic window
-        const remainingSpace = this.calculateRemainingSpace(workspace, monitor);
-        
         if (mosaicWindows.length === 1) {
             const mosaicWindow = mosaicWindows[0];
-            const frame = mosaicWindow.get_frame_rect();
-            const widthThreshold = remainingSpace.width * 0.8;
             
             // Only auto-tile to opposite side for FULL zones
-            if ((zone === TileZone.LEFT_FULL || zone === TileZone.RIGHT_FULL) && frame.width >= widthThreshold) {
+            // When only one mosaic window remains, always auto-tile it to the opposite side
+            if (zone === TileZone.LEFT_FULL || zone === TileZone.RIGHT_FULL) {
                 const oppositeZone = (zone === TileZone.LEFT_FULL) ? TileZone.RIGHT_FULL : TileZone.LEFT_FULL;
+                
+                Logger.log(`[MOSAIC WM] _handleMosaicOverflow: auto-tiling single window ${mosaicWindow.get_id()} to opposite zone ${oppositeZone}`);
                 
                 GLib.timeout_add(GLib.PRIORITY_DEFAULT, 100, () => {
                     this.applyTile(mosaicWindow, oppositeZone, workArea);
