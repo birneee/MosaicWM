@@ -172,6 +172,9 @@ export class WindowingManager {
         const workspaceManager = global.workspace_manager;
         const monitor = this.getPrimaryMonitor();
         
+        // Set flag immediately to prevent other handlers from tiling with wrong dimensions
+        window._movedByOverflow = true;
+        
         // Track origin workspace across multiple calls
         const currentIndex = window._overflowOriginWorkspace ?? window.get_workspace().index();
         window._overflowOriginWorkspace = currentIndex;
@@ -209,7 +212,6 @@ export class WindowingManager {
         const switchFocusToMovedWindow = previous_workspace.active;
         const startRect = window.get_frame_rect();
         
-        window._movedByOverflow = true;
         window.change_workspace(target_workspace);
         
         // Clear flags after settling
@@ -234,6 +236,45 @@ export class WindowingManager {
             if (this._animationsManager) {
                 const endRect = window.get_frame_rect();
                 this._animationsManager.animateWindowMove(window, startRect, endRect);
+            }
+            
+            // Re-tile after window has settled to ensure correct positioning
+            // Wait for window to have correct geometry before tiling
+            if (this._tilingManager) {
+                const waitForWindowGeometry = () => {
+                    const frame = window.get_frame_rect();
+                    // Check if window has real dimensions (not 0x0 or inherited from previous)
+                    if (frame.width > 0 && frame.height > 0 && frame.width < 1000) {
+                        Logger.log(`[MOSAIC WM] moveOversizedWindow: window geometry ready (${frame.width}x${frame.height}), retiling`);
+                        this._tilingManager.tileWorkspaceWindows(target_workspace, null, monitor);
+                        
+                        // Secondary retile only if window is not correctly positioned
+                        GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
+                            const finalFrame = window.get_frame_rect();
+                            const workArea = target_workspace.get_work_area_for_monitor(monitor);
+                            
+                            // Calculate expected center position
+                            const expectedX = Math.floor((workArea.width - finalFrame.width) / 2) + workArea.x;
+                            const expectedY = Math.floor((workArea.height - finalFrame.height) / 2) + workArea.y;
+                            
+                            // Check if window is far from expected position (threshold of 10px)
+                            const positionError = Math.abs(finalFrame.x - expectedX) + Math.abs(finalFrame.y - expectedY);
+                            
+                            if (positionError > 10) {
+                                Logger.log(`[MOSAIC WM] moveOversizedWindow: window mispositioned by ${positionError}px, retiling`);
+                                this._tilingManager.tileWorkspaceWindows(target_workspace, null, monitor);
+                            } else {
+                                Logger.log(`[MOSAIC WM] moveOversizedWindow: window correctly positioned, skipping retile`);
+                            }
+                            return GLib.SOURCE_REMOVE;
+                        });
+                        
+                        return GLib.SOURCE_REMOVE;
+                    }
+                    Logger.log(`[MOSAIC WM] moveOversizedWindow: waiting for geometry (${frame.width}x${frame.height})`);
+                    return GLib.SOURCE_CONTINUE;
+                };
+                GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, waitForWindowGeometry);
             }
             
             return GLib.SOURCE_REMOVE;

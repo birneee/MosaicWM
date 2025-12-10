@@ -169,12 +169,11 @@ export default class WindowMosaicExtension extends Extension {
                 if(!canFit && !window._movedByOverflow) {
                     Logger.log('[MOSAIC WM] Window doesn\'t fit - moving to new workspace');
                     this.windowingManager.moveOversizedWindow(window);
+                } else if (window._movedByOverflow) {
+                    // Skip tiling here - let the delayed retile in moveOversizedWindow handle it
+                    Logger.log('[MOSAIC WM] Skipping initial tile - window was just moved by overflow');
                 } else {
-                    if (window._movedByOverflow) {
-                        Logger.log('[MOSAIC WM] Skipping overflow - window was just moved');
-                    } else {
-                        Logger.log('[MOSAIC WM] Window fits - adding to tiling');
-                    }
+                    Logger.log('[MOSAIC WM] Window fits - adding to tiling');
                     this.tilingManager.tileWorkspaceWindows(workspace, window, monitor, false);
                 }
                 
@@ -460,6 +459,13 @@ export default class WindowMosaicExtension extends Extension {
             
             let workspace = window.get_workspace();
             let monitor = window.get_monitor();
+            
+            // Skip resize handling for windows just moved by overflow
+            if (window._movedByOverflow) {
+                Logger.log(`[MOSAIC WM] Skipping resize detection for window ${window.get_id()} - recently moved by overflow`);
+                this._sizeChanged = false;
+                return;
+            }
             
             if (!this.windowingManager.isMaximizedOrFullscreen(window)) {
                 const isManualResize = this._currentGrabOp && constants.RESIZE_GRAB_OPS.includes(this._currentGrabOp);
@@ -930,12 +936,17 @@ export default class WindowMosaicExtension extends Extension {
                 Logger.log(`[MOSAIC WM] window-added: window=${WINDOW.get_id()}, size=${frame.width}x${frame.height}, workArea=${workArea.width}x${workArea.height}, timeSince=${timeSinceRemoved}ms, prevWS=${previousWorkspaceIndex}, currentWS=${WORKSPACE.index()}, isManual=${isManualMove}`);
                 
                 if (previousWorkspaceIndex !== undefined && previousWorkspaceIndex !== WORKSPACE.index() && timeSinceRemoved < 100) {
-                    Logger.log(`[MOSAIC WM] window-added: Overview drag-drop - window ${WINDOW.get_id()} from workspace ${previousWorkspaceIndex} to ${WORKSPACE.index()}`);
-                    
-                    const sourceWorkspace = this._workspaceManager.get_workspace_by_index(previousWorkspaceIndex);
-                    if (sourceWorkspace) {
-                        Logger.log(`[MOSAIC WM] Re-tiling source workspace ${previousWorkspaceIndex} after DnD`);
-                        this.tilingManager.tileWorkspaceWindows(sourceWorkspace, null, MONITOR, false);
+                    // Skip if this is an overflow move, not a real drag-drop
+                    if (WINDOW._movedByOverflow) {
+                        Logger.log(`[MOSAIC WM] window-added: Skipping drag-drop handling - window was moved by overflow`);
+                    } else {
+                        Logger.log(`[MOSAIC WM] window-added: Overview drag-drop - window ${WINDOW.get_id()} from workspace ${previousWorkspaceIndex} to ${WORKSPACE.index()}`);
+                        
+                        const sourceWorkspace = this._workspaceManager.get_workspace_by_index(previousWorkspaceIndex);
+                        if (sourceWorkspace) {
+                            Logger.log(`[MOSAIC WM] Re-tiling source workspace ${previousWorkspaceIndex} after DnD`);
+                            this.tilingManager.tileWorkspaceWindows(sourceWorkspace, null, MONITOR, false);
+                        }
                     }
                     
                     const workspaceWindows = this.windowingManager.getMonitorWorkspaceWindows(WORKSPACE, MONITOR);
@@ -988,6 +999,13 @@ export default class WindowMosaicExtension extends Extension {
                     if (rect.width > 0 && rect.height > 0) {
                         const wa = WORKSPACE.get_work_area_for_monitor(MONITOR);
                         Logger.log(`[MOSAIC WM] Window ${WINDOW.get_id()} ready: size=${rect.width}x${rect.height}, workArea=${wa.width}x${wa.height}`);
+                        
+                        // Skip early tiling for overflow moved windows
+                        if (WINDOW._movedByOverflow) {
+                            Logger.log(`[MOSAIC WM] Skipping early tile in waitForGeometry - window was moved by overflow`);
+                            return GLib.SOURCE_REMOVE;
+                        }
+                        
                         this.tilingManager.tileWorkspaceWindows(WORKSPACE, null, MONITOR, true);
                         return GLib.SOURCE_REMOVE;
                     }

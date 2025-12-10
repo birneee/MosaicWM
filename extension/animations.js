@@ -283,6 +283,8 @@ export class AnimationsManager {
                              Math.abs(currentRect.width - rect.width) > constants.ANIMATION_DIFF_THRESHOLD ||
                              Math.abs(currentRect.height - rect.height) > constants.ANIMATION_DIFF_THRESHOLD;
             
+            Logger.log(`[MOSAIC WM] animateReTiling: single window, current=(${currentRect.x},${currentRect.y}), target=(${rect.x},${rect.y}), needsMove=${needsMove}`);
+            
             if (!needsMove) {
                 window.move_resize_frame(false, rect.x, rect.y, rect.width, rect.height);
                 return;
