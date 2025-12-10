@@ -1014,12 +1014,6 @@ export class TilingManager {
         
         Logger.log(`[MOSAIC WM] canFitWindow: Current non-edge-tiled windows: ${windows.length}`);
         
-        // A single window should always fit - prevents infinite loop for large windows
-        if (windows.length <= 1) {
-            Logger.log('[MOSAIC WM] canFitWindow: Only 1 window - always fits');
-            return true;
-        }
-        
         const newWindowId = window.get_id();
         const windowAlreadyInWorkspace = windows.some(w => w.id === newWindowId);
         
@@ -1029,7 +1023,7 @@ export class TilingManager {
             const realWidth = Math.max(frame.width, 200);   // Fallback to 200 if no geometry yet
             const realHeight = Math.max(frame.height, 200);
             
-            Logger.log(`[MOSAIC WM] canFitWindow: Window not in workspace - using real size ${realWidth}x${realHeight}`);
+            Logger.log(`[MOSAIC WM] canFitWindow: Window not in workspace - adding with size ${realWidth}x${realHeight}`);
             
             const newWindowDescriptor = new WindowDescriptor(window, windows.length);
             newWindowDescriptor.width = realWidth;
@@ -1038,6 +1032,13 @@ export class TilingManager {
             windows.push(newWindowDescriptor);
         } else {
             Logger.log('[MOSAIC WM] canFitWindow: Window already in workspace - checking current layout');
+        }
+        
+        // A single window should always fit - prevents infinite loop for large windows
+        // Check AFTER potentially adding the new window to the list
+        if (windows.length <= 1) {
+            Logger.log('[MOSAIC WM] canFitWindow: Only 1 window total - always fits');
+            return true;
         }
 
         const tile_result = this._tile(windows, availableSpace);
