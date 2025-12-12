@@ -171,8 +171,14 @@ export default class WindowMosaicExtension extends Extension {
                 if(!canFit && !window._movedByOverflow) {
                     Logger.log('[MOSAIC WM] Window doesn\'t fit - trying smart resize first');
                     
-                    // Try smart resize before overflow
-                    const workArea = workspace.get_work_area_for_monitor(monitor);
+                    // Try smart resize before overflow - use edge-tiling-aware work area
+                    let workArea = workspace.get_work_area_for_monitor(monitor);
+                    if (this.edgeTilingManager) {
+                        const edgeTiledWindows = this.edgeTilingManager.getEdgeTiledWindows(workspace, monitor);
+                        if (edgeTiledWindows.length > 0) {
+                            workArea = this.edgeTilingManager.calculateRemainingSpace(workspace, monitor);
+                        }
+                    }
                     
                     // Check for SACRED windows (Maximized/Fullscreen/Full WorkArea)
                     const allExistingWindows = this.windowingManager.getMonitorWorkspaceWindows(workspace, monitor)
@@ -627,7 +633,14 @@ export default class WindowMosaicExtension extends Extension {
                         !w.is_fullscreen()
                     );
                 
-                const workArea = currentWorkspace.get_work_area_for_monitor(monitor);
+                // Use edge-tiling-aware work area
+                let workArea = currentWorkspace.get_work_area_for_monitor(monitor);
+                if (this.edgeTilingManager) {
+                    const edgeTiledWindows = this.edgeTilingManager.getEdgeTiledWindows(currentWorkspace, monitor);
+                    if (edgeTiledWindows.length > 0) {
+                        workArea = this.edgeTilingManager.calculateRemainingSpace(currentWorkspace, monitor);
+                    }
+                }
                 const resizeSuccess = this.tilingManager.tryFitWithResize(window, existingWindows, workArea);
                 
                 if (resizeSuccess) {
@@ -1203,7 +1216,14 @@ export default class WindowMosaicExtension extends Extension {
                 
                 if (isEdgeTiled && (tileState.zone === TileZone.LEFT_FULL || tileState.zone === TileZone.RIGHT_FULL)) {
                     Logger.log(`[MOSAIC WM] Resize ended (grabpo=${grabpo}) for FULL edge-tiled window - fixing final sizes`);
-                    this.edgeTilingManager.fixTiledPairSizes(window, tileState.zone);
+                    // Check if there's an adjacent edge tile or mosaic windows
+                    const adjacentWindow = this.edgeTilingManager._getAdjacentWindow(window, window.get_workspace(), window.get_monitor(), tileState.zone);
+                    if (adjacentWindow) {
+                        this.edgeTilingManager.fixTiledPairSizes(window, tileState.zone);
+                    } else {
+                        // Edge tile with mosaic - constrain and retile
+                        this.edgeTilingManager.fixMosaicAfterEdgeResize(window, tileState.zone);
+                    }
                 } else if (isEdgeTiled && this.edgeTilingManager.isQuarterZone(tileState.zone)) {
                     Logger.log(`[MOSAIC WM] Resize ended (grabpo=${grabpo}) for QUARTER edge-tiled window - fixing final sizes`);
                     this.edgeTilingManager.fixQuarterPairSizes(window, tileState.zone);
